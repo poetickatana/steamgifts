@@ -831,7 +831,7 @@
             'Steam Scan Speed (2-10)',
             'steamConcurrency',
             'Sets the balance between speed and safety. Lower values are slower but safer; higher values are faster but may trigger Steam\'s anti-spam filters. Default: 6.',
-            2, 6
+            2, 10
         )
     );
 
@@ -2934,3 +2934,4 @@
     document.getElementById('sgStart').onclick = () => runScan(true);
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
 })();
+
