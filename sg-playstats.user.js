@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.2
+// @version      1.3
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -17,7 +17,6 @@
 //
 // Future goals?
 //    Multi-page winner scraping for giveaways with copies > 3.
-//    Date cutoff for giveaway scanning. Useful for large, old groups.
 //
 //KNOWN ISSUES
 // Assuming that a profile is private if games?.length === 0 is not safe. If a profile is marked as private due to API issues, it won't be scanned again until the cache expires.
@@ -277,10 +276,11 @@
 
         /* RIGHT COLUMN */
         .sg-right {
-            display: flex;
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 12px;
+            display: grid;
+            grid-template-columns: auto 1fr;
+            column-gap: 28px;
+            row-gap: 12px;
+            align-items: start;
         }
         .sg-options-container {
             align-items: left;
@@ -390,6 +390,45 @@
            z-index: 2;
            background: #2a475e;
        }
+       .sg-options-left {
+           display: flex;
+           flex-direction: column;
+           gap: 12px;
+       }
+
+       .sg-options-right {
+           min-width: 170px; /* keeps panel narrow */
+       }
+
+       .sg-date-group {
+           display: flex;
+           flex-direction: column;
+           gap: 8px;
+           font-size: 12px;
+           color: #c7d5e0;
+       }
+
+       .sg-date-label {
+           font-weight: 600;
+           opacity: 0.85;
+       }
+
+       .sg-date-field {
+           display: flex;
+           flex-direction: column;
+           gap: 2px;
+           font-size: 11px;
+           opacity: 0.9;
+       }
+
+       .sg-date-field input[type="date"] {
+           padding: 3px 6px;
+           font-size: 12px;
+           background: #1f364a;
+           border: 1px solid #3b5871;
+           color: #c7d5e0;
+           border-radius: 3px;
+       }
 }
 
     `;
@@ -445,27 +484,50 @@
 
                 <!-- RIGHT COLUMN -->
                 <div class="sg-right">
-                    <div class="sg-pill-group" id="sgModePills">
-                        <button class="sg-pill active" data-mode="single">Single user</button>
-                        <button class="sg-pill" data-mode="all">All winners</button>
-                        <button class="sg-pill" data-mode="group">Group members</button>
+
+                    <!-- LEFT OPTIONS -->
+                    <div class="sg-options-left">
+                        <div class="sg-pill-group" id="sgModePills">
+                            <button class="sg-pill active" data-mode="single">Single user</button>
+                            <button class="sg-pill" data-mode="all">All winners</button>
+                            <button class="sg-pill" data-mode="group">Group members</button>
+                        </div>
+
+                        <div class="sg-options-container">
+                            <label class="sg-checkbox-label">
+                                <input type="checkbox" id="sgWhitelistOnly">
+                                <span>Whitelist-only</span>
+                            </label>
+
+                            <label class="sg-checkbox-label">
+                                <input type="checkbox" id="sgFullCvOnly">
+                                <span>Full CV</span>
+                            </label>
+
+                            <input id="sgCreatorFilter"
+                                   placeholder="Filter by creator"
+                                   title="Filter giveaways by creator (group mode only)">
+                        </div>
                     </div>
 
-                    <div class="sg-options-container">
-                        <label class="sg-checkbox-label" title="Limit scan to whitelist-only giveaways">
-                            <input type="checkbox" id="sgWhitelistOnly">
-                            <span>Whitelist-only</span>
-                        </label>
-                        <label class="sg-checkbox-label" title="Limit scan to Full CV giveaways">
-                            <input type="checkbox" id="sgFullCvOnly">
-                            <span>Full CV</span>
-                        </label>
-                        <input id="sgCreatorFilter"
-                            placeholder="Filter by creator"
-                            title="Filter giveaways by creator (group mode only)">
+                    <!-- RIGHT OPTIONS -->
+                    <div class="sg-options-right">
+                        <div class="sg-date-group">
+                            <div class="sg-date-label">Date range</div>
+
+                            <label class="sg-date-field">
+                                <span>From</span>
+                                <input type="date" id="sgStartDate">
+                            </label>
+
+                            <label class="sg-date-field">
+                                <span>To</span>
+                                <input type="date" id="sgEndDate">
+                            </label>
+                        </div>
                     </div>
+
                 </div>
-
             </div>
 
             <div id="sgStatus" style="margin-top:5px;"></div>
@@ -1166,6 +1228,7 @@
 
     // ****** FULL CV HELPERS ******* //
     async function queryEsgstCv(endpoint, appIds, subIds) {
+
         const result = { apps: {}, subs: {} };
 
         const appChunks = chunkArray(appIds, ESGST_BATCH_SIZE);
@@ -2855,6 +2918,18 @@
             scanState.userDisplay[username.toLowerCase()] ??= username;
             const creatorFilter = creatorInput.value.trim().toLowerCase();
 
+            const startDateInput = document.getElementById('sgStartDate').value;
+            const endDateInput   = document.getElementById('sgEndDate').value;
+
+            // Convert to UNIX seconds (or null)
+            const startTs = startDateInput
+                ? Math.floor(new Date(startDateInput + 'T00:00:00Z').getTime() / 1000)
+                : null;
+
+            const endTs = endDateInput
+                ? Math.floor(new Date(endDateInput + 'T23:59:59Z').getTime() / 1000)
+                : null;
+
             if (!settings.steamApiKey) {
                 status('❌ Error: Steam API Key is missing in settings.');
                 return;
@@ -2906,6 +2981,17 @@
             if (FullCVOnly) {
                 status('Filtering Full CV giveaways…');
                 filteredWins = await getFullCVWins(filteredWins);
+            }
+
+            /* -------------------------------------------------
+               Date range filtering
+            ------------------------------------------------- */
+            if (startTs || endTs) {
+                filteredWins = filteredWins.filter(g => {
+                    if (startTs && g.ts < startTs) return false;
+                    if (endTs && g.ts > endTs) return false;
+                    return true;
+                });
             }
 
             /* -------------------------------------------------
