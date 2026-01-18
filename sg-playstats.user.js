@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.1.3
+// @version      1.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -33,6 +33,7 @@
 
     const isGroupPage = /^https:\/\/www\.steamgifts\.com\/group\/[^/]+\/[^/]+/.test(location.href);
     const isUserWonPage = /^\/user\/[^/]+\/giveaways\/won/.test(location.pathname);
+    const ESGST_BATCH_SIZE = 800;
 
     const DEFAULT_SETTINGS = {
         steamApiKey: '',
@@ -453,7 +454,11 @@
                     <div class="sg-options-container">
                         <label class="sg-checkbox-label" title="Limit scan to whitelist-only giveaways">
                             <input type="checkbox" id="sgWhitelistOnly">
-                            <span>Whitelist-only GAs</span>
+                            <span>Whitelist-only</span>
+                        </label>
+                        <label class="sg-checkbox-label" title="Limit scan to Full CV giveaways">
+                            <input type="checkbox" id="sgFullCvOnly">
+                            <span>Full CV</span>
                         </label>
                         <input id="sgCreatorFilter"
                             placeholder="Filter by creator"
@@ -953,14 +958,6 @@
         settingsPanel.style.display = open ? 'none' : 'block';
     };
 
-    // Sync Checkbox States to Logic
-    const whitelistCheck = document.getElementById('sgWhitelistOnly');
-
-    whitelistCheck.addEventListener('change', () => {
-        // Update your whitelist logic here if needed
-        // e.g., scanState.whitelistOnly = whitelistCheck.checked;
-    });
-
     panel.querySelector('#sgBody').prepend(topControls);
 
     const dateToggle = document.getElementById('sgDateFormatToggle');
@@ -1084,6 +1081,14 @@
         return hasWhitelist && !hasGroup;
     }
 
+    function chunkArray(arr, size) {
+        const chunks = [];
+        for (let i = 0; i < arr.length; i += size) {
+            chunks.push(arr.slice(i, i + size));
+        }
+        return chunks;
+    }
+
     function formatDateFromTimestamp(ts) {
         if (!ts) return 'N/A';
 
@@ -1157,6 +1162,84 @@
         }
 
         await Promise.all(workers);
+    }
+
+    // ****** FULL CV HELPERS ******* //
+    async function queryEsgstCv(endpoint, appIds, subIds) {
+        const result = { apps: {}, subs: {} };
+
+        const appChunks = chunkArray(appIds, ESGST_BATCH_SIZE);
+        const subChunks = chunkArray(subIds, ESGST_BATCH_SIZE);
+
+        const maxChunks = Math.max(appChunks.length, subChunks.length);
+
+        for (let i = 0; i < maxChunks; i++) {
+            const apps = appChunks[i] ?? [];
+            const subs = subChunks[i] ?? [];
+
+            if (!apps.length && !subs.length) continue;
+
+            const params = new URLSearchParams();
+            if (apps.length) params.set('app_ids', apps.join(','));
+            if (subs.length) params.set('sub_ids', subs.join(','));
+
+            const res = await fetch(
+                `https://esgst.rafaelgomes.xyz/api/games/${endpoint}?${params}`
+            );
+
+            if (!res.ok) {
+                throw new Error(`ESGST ${endpoint} batch failed (${res.status})`);
+            }
+
+            const json = await res.json();
+            const found = json?.result?.found;
+
+            if (found?.apps) Object.assign(result.apps, found.apps);
+            if (found?.subs) Object.assign(result.subs, found.subs);
+        }
+
+        return result;
+    }
+
+    function isCvAtTime(entry, tsSeconds) {
+        if (!entry?.effective_date) return false;
+        const effectiveTs = Date.parse(entry.effective_date) / 1000;
+        return effectiveTs <= tsSeconds;
+    }
+
+    async function getFullCVWins(wins) {
+
+        // Collect unique app/sub IDs
+        const appIds = [...new Set(
+            wins.filter(w => w.app).map(w => w.app)
+        )];
+
+        const subIds = [...new Set(
+            wins.filter(w => w.sub).map(w => w.sub)
+        )];
+
+        // Query ESGST
+        const [ncv, rcv] = await Promise.all([
+            queryEsgstCv('ncv', appIds, subIds),
+            queryEsgstCv('rcv', appIds, subIds)
+        ]);
+
+        return wins.filter(w => {
+            const ts = w.ts;
+            let isNoCv = false;
+            let isReducedCv = false;
+
+            if (w.app) {
+                isNoCv = isCvAtTime(ncv.apps?.[w.app], ts);
+                isReducedCv = isCvAtTime(rcv.apps?.[w.app], ts);
+            } else if (w.sub) {
+                isNoCv = isCvAtTime(ncv.subs?.[w.sub], ts);
+                isReducedCv = isCvAtTime(rcv.subs?.[w.sub], ts);
+            }
+
+            // Full CV = neither NCV nor RCV
+            return !isNoCv && !isReducedCv;
+        });
     }
 
     // ****** RENDER HELPERS ******* //
@@ -2767,6 +2850,7 @@
         try {
             const mode = scanState.mode;
             const whitelistOnly = document.getElementById('sgWhitelistOnly').checked;
+            const FullCVOnly = document.getElementById('sgFullCvOnly').checked;
             const username = userInput.value.trim();
             scanState.userDisplay[username.toLowerCase()] ??= username;
             const creatorFilter = creatorInput.value.trim().toLowerCase();
@@ -2814,6 +2898,14 @@
             ------------------------------------------------- */
             if (scanState.mode === 'group' && creatorFilter) {
                 filteredWins = filteredWins.filter(g => g.creator === creatorFilter);
+            }
+
+            /* -------------------------------------------------
+               Full CV filtering
+            ------------------------------------------------- */
+            if (FullCVOnly) {
+                status('Filtering Full CV giveaways…');
+                filteredWins = await getFullCVWins(filteredWins);
             }
 
             /* -------------------------------------------------
@@ -2958,5 +3050,3 @@
     document.getElementById('sgStart').onclick = () => runScan(true);
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
 })();
-
-
