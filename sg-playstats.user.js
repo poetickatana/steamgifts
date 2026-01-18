@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.4
+// @version      1.4.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1273,8 +1273,8 @@
         if (!cache) return wins;
 
         return wins.filter(win => {
-            const ts = win.ts;
-            if (!ts) return false;
+            const ts = win.createdTs;
+            if (!ts) return true; // fail open
 
             const entry = win.app
                 ? cache.apps?.[win.app]
@@ -1927,8 +1927,16 @@
                     if (subMatch) sub = Number(subMatch[1]);
                 }
 
-                const tsEl = g.querySelector('span[data-timestamp]');
-                const ts = tsEl ? Number(tsEl.dataset.timestamp) : null;
+                const timestampEls = g.querySelectorAll('span[data-timestamp]');
+
+                const endTs = timestampEls[0]
+                    ? Number(timestampEls[0].dataset.timestamp)
+                    : null;
+
+                const createdTs = timestampEls[1]
+                    ? Number(timestampEls[1].dataset.timestamp)
+                    : null;
+
                 const wlonly = isWhitelistOnlyGiveaway(g);
 
                 const creatorEl = g.querySelector('.giveaway__column--width-fill a[href^="/user/"]');
@@ -1949,8 +1957,8 @@
                         });
                 }
 
+                const ts = endTs;
                 if (!winners.length || !ts) continue;
-
 
                 if (ts < now - GA_SAFETY_WINDOW_DAYS * 24 * 60 * 60) {
                     if (ts <= lastCacheUpdate) {
@@ -1961,7 +1969,7 @@
 
                 const gid = getGiveawayId({ url, name, ts });
 
-                newlyScanned.push({ gid, name, url, app, sub, isSub: !!sub, ts, wlonly, creator, winners });
+                newlyScanned.push({ gid, name, url, app, sub, isSub: !!sub, ts: endTs, createdTs, wlonly, creator, winners });
             }
 
             await sleep(SCAN_DELAY);
