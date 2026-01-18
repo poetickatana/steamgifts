@@ -859,7 +859,7 @@
         makeSettingsTextInput(
             'Giveaway Cache Size',
             'giveawayCacheSize',
-            'Maximum number of giveaways that can be stored in cache (Default = 50000). If exceeded, the least recently used cached page gets evicted.\n\nEach giveaway entry uses ~250-300 bytes, so a 50,000 entries will occupy ~12MB.',
+            'Maximum number of giveaways that can be stored in cache (Default = 50000). If exceeded, the least recently used cached page gets evicted.\n\nEach giveaway entry uses ~250-300 bytes, so 50,000 entries will occupy ~12MB.',
             '50000'
         )
     );
@@ -1162,6 +1162,7 @@
         let eligible = 0;
         let gamesAnyCompletion = 0;
         let games25Completion = 0;
+        let games100Completion = 0;
 
         let totalUnlocked = 0;
         let totalAvailable = 0;
@@ -1185,6 +1186,7 @@
 
             if (pct > 0) gamesAnyCompletion++;
             if (pct >= 25) games25Completion++;
+            if (pct === 100) games100Completion++;
 
             if (done > 0) {
                 totalUnlocked += done;
@@ -1198,6 +1200,7 @@
 
             gamesAnyCompletion,
             games25Completion,
+            games100Completion,
 
             pctAnyCompletion: eligible
                 ? Math.round((gamesAnyCompletion / eligible) * 100)
@@ -1205,6 +1208,10 @@
 
             pct25Completion: eligible
                 ? Math.round((games25Completion / eligible) * 100)
+                : 0,
+
+            pct100Completion: eligible
+                ? Math.round((games100Completion / eligible) * 100)
                 : 0,
 
             compPct: totalAvailable
@@ -1769,7 +1776,10 @@
             🏆 <b>${stats.games25Completion}</b> / ${stats.eligible}
             games (<b>${stats.pct25Completion}%</b>) have <b>≥25%</b> completion<br>
 
-            ⭐ Avg. Game Completion Rate: <b>${stats.compPct}%</b><br>
+            ⭐ <b>${stats.games100Completion}</b> / ${stats.eligible}
+            games (<b>${stats.pct100Completion}%</b>) have <b>100%</b> completion<br>
+
+            🎗️ Avg. Achievement Percentage: <b>${stats.compPct}%</b><br>
 
             ⏱️ Games with any Playtime: <b>${stats.anyHours}</b><br>
 
@@ -1937,89 +1947,101 @@
         table.id = 'sg-summary-table';
 
         const colgroup = document.createElement('colgroup');
-        colgroup.innerHTML = `
-           <col style="width: 22%">
-           <col style="width: 12%">
-           <col style="width: 12%">
-           <col style="width: 9%">
-           <col style="width: 12%">
-           <col style="width: 9%">
-           <col style="width: 10%">
-           <col style="width: 14%">
-        `;
-        table.appendChild(colgroup);
+            colgroup.innerHTML = `
+                <col style="width: 21%">
+                <col style="width: 10%">
+                <col style="width: 15%">
+                <col style="width: 15%">
+                <col style="width: 15%">
+                <col style="width: 12%">
+                <col style="width: 12%">
+            `;
+            table.appendChild(colgroup);
 
-        const headers = ['User','Games Won','Games >0%','% >0','Games ≥25','% ≥25','Comp %','Total Hours'];
-        const thead = document.createElement('thead');
-        const trHead = document.createElement('tr');
-        headers.forEach((h,i) => {
-            const th = document.createElement('th');
-            th.innerText = h;
-            th.style = 'cursor:pointer;padding:6px;background:#2a475e;color:#fff;border:1px solid #444;';
-            th.onclick = () => sortTable(table, i);
-            trHead.appendChild(th);
-        });
-        thead.appendChild(trHead);
-        table.appendChild(thead);
-
-        const tbody = document.createElement('tbody');
-        summary.forEach(u => {
-            const tr = document.createElement('tr');
-            // Highlight group members
-            /*if (membersSet && membersSet.has(u.username.toLowerCase())) {
-                tr.style.backgroundColor = '#284b35';
-            }*/
-
-            const tdUser = document.createElement('td');
-            tdUser.style = 'padding:6px;border:1px solid #444;text-align:left;';
-            const a = document.createElement('a');
-            a.href = '#';
-            a.onclick = (e) => { e.preventDefault(); showUserDetail(u.username); };
-            a.innerText = scanState.userDisplay[u.username] ?? u.username;
-            tdUser.appendChild(a);
-            tr.appendChild(tdUser);
-
-            const cols = ['gamesWon','gamesAnyCompletion','pctAnyCompletion','games25Completion','pct25Completion','compPct','totalHours'];
-            cols.forEach(c => {
-                const td = document.createElement('td');
-                td.style = 'padding:6px;border:1px solid #444;';
-
-                const isPrivate = !!scanState.userPrivate[u.username];
-                let val = (!isPrivate || c === 'gamesWon')
-                    ? (u[c] ?? 0)
-                    : '🔒';
-
-                // Set the sorting/data value
-                td.dataset.value = (isPrivate && c !== 'gamesWon') ? -1 : (u[c] ?? -1);
-
-                if (c === 'totalHours' && typeof val === 'number') {
-                    val = val.toFixed(1);
-                }
-
-                td.innerText = val;
-
-                // 3. Append percentage sign if applicable
-                if (!isPrivate && (c === 'pctAnyCompletion' || c === 'pct25Completion' || c === 'compPct')) {
-                    td.innerText += '%';
-                }
-                tr.appendChild(td);
+            const headers = ['User', 'Wins', '% Started<br>(>0🏆)', '% Pushed<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
+            const thead = document.createElement('thead');
+            const trHead = document.createElement('tr');
+            headers.forEach((h, i) => {
+                const th = document.createElement('th');
+                th.innerHTML = h; // Use innerHTML to render the 🏆 emoji properly
+                th.style = `
+                    cursor: pointer;
+                    padding: 8px 4px;      /* Slightly more vertical padding */
+                    background: #2a475e;
+                    color: #fff;
+                    border: 1px solid #444;
+                    white-space: normal;
+                    vertical-align: bottom;
+                    line-height: 1.2;
+                `;
+                th.onclick = () => sortTable(table, i);
+                trHead.appendChild(th);
             });
+            thead.appendChild(trHead);
+            table.appendChild(thead);
 
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
+            const tbody = document.createElement('tbody');
 
-        resultsWrap.appendChild(table);
+            const cols = ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct100Completion', 'compPct', 'totalHours'];
 
-        // Apply last sort
-        if (summarySort.col !== null) {
-            sortTable(table, summarySort.col, summarySort.asc);
+            summary.forEach(u => {
+                const tr = document.createElement('tr');
+
+                // User Column
+                const tdUser = document.createElement('td');
+                tdUser.style = 'padding:6px;border:1px solid #444;text-align:left;';
+                const a = document.createElement('a');
+                a.href = '#';
+                a.onclick = (e) => { e.preventDefault(); showUserDetail(u.username); };
+                a.innerText = scanState.userDisplay[u.username] ?? u.username;
+                tdUser.appendChild(a);
+                tr.appendChild(tdUser);
+
+                // Data Columns
+                cols.forEach((c) => {
+                    const td = document.createElement('td');
+                    td.style = 'padding:6px;border:1px solid #444;';
+
+                    const isPrivate = !!scanState.userPrivate[u.username];
+                    const isWinCol = c === 'gamesWon';
+
+                    // Set sorting value
+                    td.dataset.value = (isPrivate && !isWinCol) ? -1 : (u[c] ?? -1);
+
+                    let display = (isPrivate && !isWinCol) ? '🔒' : (u[c] ?? 0);
+
+                    if (!isPrivate || isWinCol) {
+                        if (c === 'totalHours') {
+                            display = Number(display).toFixed(1);
+                        }
+                        else if (c === 'pctAnyCompletion') {
+                            display = `${u.pctAnyCompletion}% <small style="opacity:0.7">(${u.gamesAnyCompletion}/${u.eligible})</small>`;
+                        }
+                        else if (c === 'pct25Completion') {
+                            display = `${u.pct25Completion}% <small style="opacity:0.7">(${u.games25Completion}/${u.eligible})</small>`;
+                        }
+                        else if (c === 'pct100Completion') {
+                            display = `${u.pct100Completion}% <small style="opacity:0.7">(${u.games100Completion}/${u.eligible})</small>`;
+                        }
+                        else if (c === 'compPct') {
+                            display = `${display}%`;
+                        }
+                    }
+
+                    td.innerHTML = display;
+                    tr.appendChild(td);
+                });
+
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            resultsWrap.appendChild(table);
+
+            if (summarySort.col !== null) {
+                sortTable(table, summarySort.col, summarySort.asc);
+            }
+            saveScanState();
         }
-
-        // Save to localStorage
-        saveScanState();
-    }
-
     /***********************
      * Giveaway IndexedDB
      ***********************/
@@ -2934,4 +2956,3 @@
     document.getElementById('sgStart').onclick = () => runScan(true);
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
 })();
-
