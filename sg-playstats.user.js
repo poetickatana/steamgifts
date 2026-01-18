@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.3
+// @version      1.4
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -9,6 +9,8 @@
 // @match        https://www.steamgifts.com/user/*
 // @exclude      https://www.steamgifts.com/group/*/*/*
 // @grant        GM_xmlhttpRequest
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      steamcommunity.com
 // @connect      store.steampowered.com
 // @connect      api.steampowered.com
@@ -32,7 +34,9 @@
 
     const isGroupPage = /^https:\/\/www\.steamgifts\.com\/group\/[^/]+\/[^/]+/.test(location.href);
     const isUserWonPage = /^\/user\/[^/]+\/giveaways\/won/.test(location.pathname);
-    const ESGST_BATCH_SIZE = 800;
+    const ESGST_BATCH_SIZE = 200;
+    const ESGST_CACHE_KEY = 'esgst_cv_cache_v1';
+    const ESGST_CACHE_TTL = 24 * 60 * 60; // seconds
 
     const DEFAULT_SETTINGS = {
         steamApiKey: '',
@@ -1228,12 +1232,12 @@
 
     // ****** FULL CV HELPERS ******* //
     async function queryEsgstCv(endpoint, appIds, subIds) {
-
-        const result = { apps: {}, subs: {} };
+        const merged = {
+            found: { apps: {}, subs: {} }
+        };
 
         const appChunks = chunkArray(appIds, ESGST_BATCH_SIZE);
         const subChunks = chunkArray(subIds, ESGST_BATCH_SIZE);
-
         const maxChunks = Math.max(appChunks.length, subChunks.length);
 
         for (let i = 0; i < maxChunks; i++) {
@@ -1257,52 +1261,135 @@
             const json = await res.json();
             const found = json?.result?.found;
 
-            if (found?.apps) Object.assign(result.apps, found.apps);
-            if (found?.subs) Object.assign(result.subs, found.subs);
+            if (found?.apps) Object.assign(merged.found.apps, found.apps);
+            if (found?.subs) Object.assign(merged.found.subs, found.subs);
         }
 
-        return result;
+        return merged;
     }
 
-    function isCvAtTime(entry, tsSeconds) {
-        if (!entry?.effective_date) return false;
-        const effectiveTs = Date.parse(entry.effective_date) / 1000;
-        return effectiveTs <= tsSeconds;
+    function getFullCVWins(wins) {
+        const cache = GM_getValue(ESGST_CACHE_KEY, null);
+        if (!cache) return wins;
+
+        return wins.filter(win => {
+            const ts = win.ts;
+            if (!ts) return false;
+
+            const entry = win.app
+                ? cache.apps?.[win.app]
+                : win.sub
+                ? cache.subs?.[win.sub]
+                : null;
+
+            if (!entry) return true;
+
+            const isNcv =
+                entry.ncv &&
+                Date.parse(entry.ncv.effective_date) / 1000 <= ts;
+
+            const isRcv =
+                entry.rcv &&
+                Date.parse(entry.rcv.effective_date) / 1000 <= ts;
+
+            return !isNcv && !isRcv;
+        });
     }
 
-    async function getFullCVWins(wins) {
+    function loadEsgstCvCache() {
+        const cache = GM_getValue(ESGST_CACHE_KEY, null);
+        if (!cache) return null;
 
-        // Collect unique app/sub IDs
-        const appIds = [...new Set(
-            wins.filter(w => w.app).map(w => w.app)
-        )];
+        if (!cache.fetchedAt) return cache;
 
-        const subIds = [...new Set(
-            wins.filter(w => w.sub).map(w => w.sub)
-        )];
+        const now = Math.floor(Date.now() / 1000);
+        if (now - cache.fetchedAt > ESGST_CACHE_TTL) {
+            return null;
+        }
 
-        // Query ESGST
+        return cache;
+    }
+
+    function getMissingCvIds(wins, cache) {
+        const apps = new Set();
+        const subs = new Set();
+
+        for (const g of wins) {
+            if (g.app && !cache?.apps?.[g.app]) {
+                apps.add(g.app);
+            }
+            if (g.sub && !cache?.subs?.[g.sub]) {
+                subs.add(g.sub);
+            }
+        }
+
+        return {
+            app_ids: [...apps],
+            sub_ids: [...subs]
+        };
+    }
+
+    function mergeIntoCache(cache, ncv, rcv) {
+        for (const [id, data] of Object.entries(ncv.found.apps || {})) {
+            cache.apps[id] ??= {};
+            cache.apps[id].ncv = data;
+        }
+        for (const [id, data] of Object.entries(rcv.found.apps || {})) {
+            cache.apps[id] ??= {};
+            cache.apps[id].rcv = data;
+        }
+
+        for (const [id, data] of Object.entries(ncv.found.subs || {})) {
+            cache.subs[id] ??= {};
+            cache.subs[id].ncv = data;
+        }
+        for (const [id, data] of Object.entries(rcv.found.subs || {})) {
+            cache.subs[id] ??= {};
+            cache.subs[id].rcv = data;
+        }
+    }
+
+    async function ensureEsgstCvData(wins) {
+        const now = Math.floor(Date.now() / 1000);
+
+        let cache = await loadEsgstCvCache();
+        if (!cache) {
+            cache = {
+                fetchedAt: 0,
+                apps: {},
+                subs: {}
+            };
+        }
+
+        const { app_ids, sub_ids } = getMissingCvIds(wins, cache);
+
+        if (!app_ids.length && !sub_ids.length) {
+            return; // cache hit, nothing to fetch
+        }
+
+        const fetchEsgstNcv = (apps, subs) =>
+        queryEsgstCv('ncv', apps, subs);
+
+        const fetchEsgstRcv = (apps, subs) =>
+        queryEsgstCv('rcv', apps, subs);
+
         const [ncv, rcv] = await Promise.all([
-            queryEsgstCv('ncv', appIds, subIds),
-            queryEsgstCv('rcv', appIds, subIds)
+            fetchEsgstNcv(app_ids, sub_ids),
+            fetchEsgstRcv(app_ids, sub_ids)
         ]);
 
-        return wins.filter(w => {
-            const ts = w.ts;
-            let isNoCv = false;
-            let isReducedCv = false;
+        // Mark all requested apps/subs as checked (even if ESGST returns nothing)
+        for (const id of app_ids) {
+            cache.apps[id] ??= {};
+        }
+        for (const id of sub_ids) {
+            cache.subs[id] ??= {};
+        }
 
-            if (w.app) {
-                isNoCv = isCvAtTime(ncv.apps?.[w.app], ts);
-                isReducedCv = isCvAtTime(rcv.apps?.[w.app], ts);
-            } else if (w.sub) {
-                isNoCv = isCvAtTime(ncv.subs?.[w.sub], ts);
-                isReducedCv = isCvAtTime(rcv.subs?.[w.sub], ts);
-            }
+        mergeIntoCache(cache, ncv, rcv);
 
-            // Full CV = neither NCV nor RCV
-            return !isNoCv && !isReducedCv;
-        });
+        cache.fetchedAt = now;
+        GM_setValue(ESGST_CACHE_KEY, cache);
     }
 
     // ****** RENDER HELPERS ******* //
@@ -2980,7 +3067,8 @@
             ------------------------------------------------- */
             if (FullCVOnly) {
                 status('Filtering Full CV giveaways…');
-                filteredWins = await getFullCVWins(filteredWins);
+                await ensureEsgstCvData(filteredWins);
+                filteredWins = getFullCVWins(filteredWins);
             }
 
             /* -------------------------------------------------
