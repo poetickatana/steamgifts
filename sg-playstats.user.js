@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.4.1
+// @version      1.5.0
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -77,7 +77,7 @@
     let dragOffsetY = 0;
 
     const DRAG_THRESHOLD = 5; // pixels
-    const PANEL_EXPANDED_WIDTH = 700;
+    const PANEL_EXPANDED_WIDTH = 750;
     const PANEL_COLLAPSED_PADDING = '0px';
 
     /************ UI ************/
@@ -191,7 +191,7 @@
 
         .sg-pill-group {
             display: flex;
-            border-radius: 999px;
+            border-radius: 8px;
             overflow: hidden;
             border: 1px solid #3b5871;
             background: #1b2838;
@@ -1511,6 +1511,15 @@
         URL.revokeObjectURL(url);
     }
 
+    function getFlatResults() {
+        return Object.entries(scanState.userMap).flatMap(([user, wins]) => {
+            return wins.map(win => ({
+                ...win,
+                winner: user // Store the key for lookups
+            }));
+        });
+    }
+
     /******** SUB RESOLUTION HELPERS ********/
     function parseSubAppsFromHTML(html) {
         const doc = parseHTML(html);
@@ -1997,6 +2006,7 @@
         resultsWrap.querySelector('table')?.remove();
         resultsWrap.querySelector('#dismiss-table')?.remove();
         resultsWrap.querySelector('#write-csv')?.remove();
+        resultsWrap.querySelector('#flat-view')?.remove();
         resultsWrap.querySelector('#back-to-summary')?.remove();
 
         scanState.activeUser = username;
@@ -2119,7 +2129,168 @@
         // Remove all tables in resultsWrap
         resultsWrap.querySelectorAll('table').forEach(t => t.remove());
         // Remove any dismiss buttons
-        resultsWrap.querySelectorAll('#dismiss-table, #back-to-summary, #write-csv').forEach(b => b.remove());
+        resultsWrap.querySelectorAll('#dismiss-table, #back-to-summary, #write-csv, #flat-view').forEach(b => b.remove());
+    }
+
+    /************ RENDER FLAT SUMMARY ************/
+    function renderFlatView() {
+        const flatResults = getFlatResults();
+        clearResults();
+
+        // Toggle Button: Switch back to Summary
+        const winnersBtn = document.createElement('button');
+        winnersBtn.id = 'winners-view';
+        winnersBtn.innerText = 'Winners View';
+        winnersBtn.style = `float:left; margin-bottom:5px; padding:2px 6px; font-size:12px; background:#2a475e; color:#fff; border:none; border-radius:3px; cursor:pointer;`;
+        winnersBtn.onclick = () => {
+            scanState.viewMode = 'summary';
+            renderSummary(Object.entries(scanState.userMap).map(([u, w]) => ({ username: u, ...computeUserStats(w) })));
+        };
+        resultsWrap.appendChild(winnersBtn);
+
+        const dismissBtn = document.createElement('button');
+        dismissBtn.id = 'dismiss-table';
+        dismissBtn.innerText = '✖';
+        dismissBtn.title = 'Dismiss summary';
+        dismissBtn.style = `
+            float: right;
+            margin-bottom: 5px;
+            padding: 2px 6px;
+            font-size: 12px;
+            background:#2a475e;
+            color:#fff;
+            border:none;
+            border-radius:3px;
+            cursor:pointer;
+        `;
+        dismissBtn.onclick = () => {
+            resultsWrap.querySelector('table')?.remove();
+            dismissBtn.remove();
+            winnersBtn.remove();
+            csvBtn.remove();
+            status('');
+        };
+        resultsWrap.appendChild(dismissBtn);
+
+        const csvBtn = document.createElement('button');
+            csvBtn.id = 'write-csv';
+            csvBtn.innerText = 'CSV';
+            csvBtn.title = 'Export table to CSV';
+            csvBtn.style = `
+                float: right;
+                margin-bottom: 5px;
+                margin-right: 5px;
+                padding: 2px 6px;
+                font-size: 12px;
+                background:#2a475e;
+                color:#fff;
+                border:none;
+                border-radius:3px;
+                cursor:pointer;
+            `;
+
+            csvBtn.onclick = async () => {
+                const table = document.getElementById('sg-flat-table');
+                if (table) {
+                    exportTableToCSV(table, `steamgifts-giveaways-${new Date().toISOString().slice(0,10)}.csv`);
+                }
+            };
+
+        resultsWrap.appendChild(csvBtn);
+
+        const table = document.createElement('table');
+        table.id = 'sg-flat-table';
+        table.style = `width: 100%; margin-top: 10px; border-collapse: collapse; table-layout: fixed; text-align: center; white-space: nowrap;`;
+
+        const colgroup = document.createElement('colgroup');
+        colgroup.innerHTML = `
+            <col style="width: 32%"> <col style="width: 13%"> <col style="width: 20%"> <col style="width: 13%"> <col style="width: 12%"> <col style="width: 10%"> `;
+        table.appendChild(colgroup);
+
+        const headers = ['Game', 'Date', 'Winner', 'Achievements', 'Comp %', 'Hours'];
+        const thead = document.createElement('thead');
+        const trHead = document.createElement('tr');
+        headers.forEach((h, i) => {
+            const th = document.createElement('th');
+            th.innerText = h;
+            th.style = 'cursor: pointer; padding: 6px; background: #2a475e; color: #fff; border: 1px solid #444;';
+            th.onclick = () => sortTable(table, i);
+            trHead.appendChild(th);
+        });
+        thead.appendChild(trHead);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        flatResults.forEach(r => {
+            const tr = document.createElement('tr');
+            if (r.wlonly) tr.style.backgroundColor = '#0d5c94';
+
+            // 1. Game Name
+            const tdName = document.createElement('td');
+            tdName.style = 'padding: 6px; border:1px solid #444; text-align: left; overflow: hidden; text-overflow: ellipsis;';
+            if (r.url) {
+                const a = document.createElement('a');
+                a.href = r.url; a.target = '_blank'; a.style = 'color:#66c0f4; text-decoration:none;';
+                a.innerText = r.name; tdName.appendChild(a);
+            } else {
+                tdName.innerText = r.name + ' 🔒'; tdName.style.color = '#888';
+            }
+            tr.appendChild(tdName);
+
+            // 2. Date
+            const tdDate = document.createElement('td');
+            tdDate.style = 'padding: 6px; border:1px solid #444;';
+            tdDate.innerText = formatDateFromTimestamp(r.ts);
+            tdDate.dataset.value = r.ts ?? -1;
+            tr.appendChild(tdDate);
+
+            // 3. Winner (The New Column)
+            const tdWinner = document.createElement('td');
+            tdWinner.style = 'padding: 6px; border:1px solid #444; overflow: hidden; text-overflow: ellipsis; text-align: left;';
+            const aWin = document.createElement('a');
+            aWin.href = '#';
+            aWin.onclick = (e) => { e.preventDefault(); showUserDetail(r.winner); };
+            aWin.innerText = scanState.userDisplay[r.winner] ?? r.winner;
+            tdWinner.appendChild(aWin);
+            tr.appendChild(tdWinner);
+
+            // 4. Achievements
+            const tdAch = document.createElement('td');
+            tdAch.style = 'padding: 6px; border:1px solid #444;';
+            if (r.ach && r.ach.includes('/') && r.app) {
+                const [done, total] = r.ach.split('/').map(Number);
+                const a = document.createElement('a');
+                a.href = `https://steamcommunity.com/profiles/${r.steamid}/stats/${r.app}/achievements`;
+                a.target = '_blank'; a.style = 'color:#66c0f4; text-decoration:none;';
+                a.innerText = r.ach; tdAch.appendChild(a);
+                tdAch.dataset.value = done / total;
+            } else {
+                tdAch.innerText = r.ach || 'N/A'; tdAch.dataset.value = -1;
+            }
+            tr.appendChild(tdAch);
+
+            // 5. Completion %
+            const tdComp = document.createElement('td');
+            tdComp.style = 'padding: 6px; border:1px solid #444;';
+            const [done, total] = (r.ach || "").split('/').map(Number);
+            const pct = total > 0 ? Math.round((done / total) * 100) : -1;
+            tdComp.innerText = pct >= 0 ? pct + '%' : 'N/A';
+            tdComp.dataset.value = pct;
+            tr.appendChild(tdComp);
+
+            // 6. Hours
+            const tdHours = document.createElement('td');
+            tdHours.style = 'padding: 6px; border:1px solid #444;';
+            const hours = r.hours !== undefined ? Number(r.hours)/60 : 0;
+            tdHours.innerText = hours.toFixed(1);
+            tdHours.dataset.value = hours;
+            tr.appendChild(tdHours);
+
+            tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        resultsWrap.appendChild(table);
     }
 
     /************ RENDER SUMMARY ************/
@@ -2128,6 +2299,8 @@
         resultsWrap.querySelector('table')?.remove();
         resultsWrap.querySelector('#dismiss-table')?.remove();
         resultsWrap.querySelector('#write-csv')?.remove();
+        resultsWrap.querySelector('#flat-view')?.remove();
+        resultsWrap.querySelector('#winners-view')?.remove();
         resultsWrap.querySelector('#back-to-summary')?.remove();
 
         const dismissBtn = document.createElement('button');
@@ -2148,6 +2321,8 @@
         dismissBtn.onclick = () => {
             resultsWrap.querySelector('table')?.remove();
             dismissBtn.remove();
+            csvBtn.remove();
+            flatViewBtn.remove();
             status('');
         };
         resultsWrap.appendChild(dismissBtn);
@@ -2177,6 +2352,17 @@
             };
 
         resultsWrap.appendChild(csvBtn);
+
+        const flatViewBtn = document.createElement('button');
+            flatViewBtn.id = 'flat-view';
+            flatViewBtn.innerText = 'Giveaways View';
+            flatViewBtn.title = 'Show a list of all games won';
+            flatViewBtn.style = `float: left; margin-bottom: 5px; margin-right: 5px; padding: 2px 6px; font-size: 12px; background:#2a475e; color:#fff; border:none; border-radius:3px; cursor:pointer;`;
+            flatViewBtn.onclick = () => {
+                scanState.viewMode = 'flat';
+                renderFlatView();
+            };
+        resultsWrap.appendChild(flatViewBtn);
 
         const table = document.createElement('table');
         table.style = `
@@ -2732,6 +2918,7 @@
         dismissBtn.onclick = () => {
             panel.querySelector('table')?.remove();
             dismissBtn.remove();
+            csvBtn.remove();
             csvBtn.remove();
             status('');
         };
