@@ -34,7 +34,7 @@
 
     const DEFAULT_SETTINGS = {
         steamApiKey: '',
-        steamConcurrency : 5, // # of parallel Steam API requests in single-user mode
+        steamConcurrency : 6, // # of parallel Steam API requests in single-user mode
         steamCacheTTLDays: 5, // Validity period of cached Steam data
         giveawayCacheSize: 50000
     }
@@ -828,9 +828,9 @@
 
     settingsPanel.appendChild(
         makeSettingInput(
-            'Steam Scan Speed (2-6)',
+            'Steam Scan Speed (2-10)',
             'steamConcurrency',
-            'Sets the balance between speed and safety. Lower values are slower but safer; higher values are faster but may trigger Steam\'s anti-spam filters. Default: 5.',
+            'Sets the balance between speed and safety. Lower values are slower but safer; higher values are faster but may trigger Steam\'s anti-spam filters. Default: 6.',
             2, 6
         )
     );
@@ -1167,9 +1167,12 @@
         let totalAvailable = 0;
 
         let totalHours = 0;
+        let anyHours = 0;
+        let avgHours = 0;
 
         for (const w of wins) {
             totalHours += w.hours ?? 0;
+            if (w.hours) anyHours++;
 
             if (!w.ach || !w.ach.includes('/')) continue;
 
@@ -1208,7 +1211,13 @@
                 ? Math.round((totalUnlocked / totalAvailable) * 100)
                 : 0,
 
-            totalHours: totalHours / 60
+            totalHours: totalHours / 60,
+
+            anyHours: anyHours,
+
+            avgHours: anyHours
+                ? Math.trunc((totalHours / 60) / anyHours * 100) / 100
+                : 0
         };
     }
 
@@ -1760,7 +1769,11 @@
             🏆 <b>${stats.games25Completion}</b> / ${stats.eligible}
             games (<b>${stats.pct25Completion}%</b>) have <b>≥25%</b> completion<br>
 
-            ⭐ Avg. Game Completion Rate: <b>${stats.compPct}%</b>
+            ⭐ Avg. Game Completion Rate: <b>${stats.compPct}%</b><br>
+
+            ⏱️ Games with any Playtime: <b>${stats.anyHours}</b><br>
+
+            ⏰ Avg. Game Playtime: <b>${stats.avgHours}</b>
         `;
 
          if (scanState.userPrivate[username]) {
