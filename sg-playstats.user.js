@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.1
+// @version      1.1.3
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
 // @match        https://www.steamgifts.com/group/*/*
 // @match        https://www.steamgifts.com/user/*
@@ -2956,3 +2956,4 @@
     document.getElementById('sgStart').onclick = () => runScan(true);
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
 })();
+
