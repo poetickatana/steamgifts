@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.5.0
+// @version      1.6.0
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -67,6 +67,7 @@
     };
 
     let dateFormatMDY = true; // default to MM-DD-YYYY
+    let annotateON = false; // default to ON
 
     let isDragging = false;
     let dragMoved = false;
@@ -94,6 +95,7 @@
         .date-toggle-wrapper {
             display: flex;
             align-items: center;
+            margin-bottom: 12px;
             justify-content: space-between;
             font-size: 13px;
             color: #c7d5e0;
@@ -186,6 +188,104 @@
             opacity: 0;
         }
         .date-toggle-switch input:checked + .date-toggle-slider .date-mdy {
+            opacity: 1;
+        }
+
+        .annotate-toggle-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #c7d5e0;
+            white-space: nowrap;
+        }
+
+        .annotate-toggle-label  {
+            font-weight:bold;
+            font-size:13px;
+            color:#c7d5e0;
+        }
+
+        .annotate-toggle-switch {
+            position: relative;
+            display: inline-block;
+            /* Reduced size */
+            width: 44px;
+            height: 18px;
+        }
+
+        .annotate-toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #555;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .annotate-toggle-slider::before {
+            content: "";
+            position: absolute;
+            /* Knob is 4px smaller than the container height to create a 2px margin */
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background-color: #fff; /* White knob often looks better on small switches */
+            border-radius: 50%;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+
+        .annotate-toggle-switch input:checked + .annotate-toggle-slider::before {
+            /* (Width - Knob Width - Margins) = (44 - 14 - 4) = 26px */
+            transform: translateX(26px);
+        }
+
+        .annotate-toggle-switch input:checked + .annotate-toggle-slider {
+            background: #66c0f4;
+        }
+
+        .annotate-toggle-text {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: 700;
+            font-size: 8px;
+            color: #fff;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            white-space: nowrap; /* Prevents text from wrapping */
+        }
+
+        .annotate-toggle-switch input:not(:checked) + .annotate-toggle-slider .annotate-off {
+            opacity: 0; /* Using opacity: 0 for a cleaner look on small sizes */
+        }
+
+        .annotate-toggle-switch input:checked + .annotate-toggle-slider .annotate-on {
+            opacity: 0;
+        }
+
+        .annotate-off {
+            right: 6px;
+            opacity: 1;
+        }
+        .annotate-on {
+            left: 6px;
+            opacity: 0;
+        }
+
+        /* --- Toggle Logic --- */
+        .annotate-toggle-switch input:not(:checked) + .annotate-toggle-slider .annotate-off {
+            opacity: 1;
+        }
+        .annotate-toggle-switch input:not(:checked) + .annotate-toggle-slider .annotate-on {
+            opacity: 0;
+        }
+        .annotate-toggle-switch input:checked + .annotate-toggle-slider .annotate-off {
+            opacity: 0;
+        }
+        .annotate-toggle-switch input:checked + .annotate-toggle-slider .annotate-on {
             opacity: 1;
         }
 
@@ -499,12 +599,12 @@
 
                         <div class="sg-options-container">
                             <label class="sg-checkbox-label">
-                                <input type="checkbox" id="sgWhitelistOnly">
+                                <input type="checkbox" id="sgWhitelistOnly" title="Only include whitelise-only giveaways">
                                 <span>Whitelist-only</span>
                             </label>
 
                             <label class="sg-checkbox-label">
-                                <input type="checkbox" id="sgFullCvOnly">
+                                <input type="checkbox" id="sgFullCvOnly" title="Only include Full CV giveaways">
                                 <span>Full CV</span>
                             </label>
 
@@ -549,6 +649,16 @@
             </span>
         </label>
     </div>
+    <div class="annotate-toggle-wrapper" id="sgAnnotateToggleRow">
+        <span class="annotate-toggle-label">Result Annotation</span>
+        <label class="annotate-toggle-switch">
+            <input type="checkbox" id="sgAnnotateToggle">
+            <span class="annotate-toggle-slider">
+                <span class="annotate-toggle-text annotate-off">OFF</span>
+                <span class="annotate-toggle-text annotate-on">ON</span>
+            </span>
+        </label>
+    </div>
     `;
     document.body.appendChild(panel);
 
@@ -583,7 +693,7 @@
                 pill.title = "Scan all winners";
                 break;
             case 'group':
-                pill.title = "Scan all winners who are group members (only applicable to group pages)";
+                pill.title = "Scan only winners who are group members";
                 break;
         }
     });
@@ -678,6 +788,11 @@
     const dateToggleRow = document.getElementById('sgDateToggleRow');
     if (dateToggleRow) {
         settingsPanel.appendChild(dateToggleRow);
+    }
+
+    const annotateToggleRow = document.getElementById('sgAnnotateToggleRow');
+    if (annotateToggleRow) {
+        settingsPanel.appendChild(annotateToggleRow);
     }
 
     topControls.appendChild(restoreBtn);
@@ -1049,6 +1164,23 @@
         }
     });
 
+    const annotateToggle = document.getElementById('sgAnnotateToggle');
+
+    // Load saved state from localStorage (default to true if not set)
+    const savedAnnotate = localStorage.getItem('playstats_annotate');
+    annotateToggle.checked = savedAnnotate !== null ? JSON.parse(savedAnnotate) : annotateON;
+
+    // Set the variable to match saved state
+    annotateON = annotateToggle.checked;
+
+    annotateToggle.addEventListener('change', async () => {
+        annotateON = annotateToggle.checked;
+
+        // Save to localStorage
+        localStorage.setItem('playstats_annotate', JSON.stringify(annotateON));
+        refreshAnnotations();
+    });
+
     if (!isGroupPage) {
         document
             .querySelector('.sg-pill[data-mode="group"]')
@@ -1392,6 +1524,22 @@
         GM_setValue(ESGST_CACHE_KEY, cache);
     }
 
+    async function saveUserStatsToCache(username, stats) {
+        const key = `user_stats_${username.toLowerCase()}`;
+        const data = {
+            stats: stats,
+            ts: Date.now()
+        };
+        // No need to stringify!
+        await GM_setValue(key, data);
+    }
+
+    async function getUserStatsFromCache(username) {
+        const key = `user_stats_${username.toLowerCase()}`;
+        // No need to parse!
+        return await GM_getValue(key, null);
+    }
+
     // ****** RENDER HELPERS ******* //
     function computeUserStats(wins) {
         let eligible = 0;
@@ -1457,6 +1605,8 @@
 
             anyHours: anyHours,
 
+            pctAnyHours: Math.round((anyHours / wins.length) * 100),
+
             avgHours: anyHours
                 ? Math.trunc((totalHours / 60) / anyHours * 100) / 100
                 : 0
@@ -1471,7 +1621,7 @@
                 let text = cell.innerText
                     .replace(/\s+/g, ' ')
                     .trim()
-                    .replace(/🔒/g, 'PRIVATE')
+                    .replace(/🔒/g, '')
                     .replace(/"/g, '""');
                 return `"${text}"`;
             }).join(',');
@@ -1518,6 +1668,98 @@
                 winner: user // Store the key for lookups
             }));
         });
+    }
+
+    async function refreshAnnotations() {
+        // 1. Remove existing injected rows if they exist
+        document.querySelectorAll('.sg-injected-row').forEach(el => el.remove());
+
+        // 2. Only inject if the setting is ON
+        if (annotateON) {
+            await injectStatsToSgTable();
+        }
+    }
+
+    async function injectStatsToSgTable() {
+        const columns = document.querySelectorAll('.featured__table__column');
+        const targetTable = columns[1];
+        if (!targetTable) return;
+        const pathParts = window.location.pathname.split('/');
+        const profileOwner = pathParts[2]?.toLowerCase();
+        if (!profileOwner) return;
+
+        const cached = await getUserStatsFromCache(profileOwner);
+        if (!cached) return;
+
+        const { stats, ts } = cached;
+
+        const createSgRow = (left, right, extraStyle = '') => {
+            const row = document.createElement('div');
+            row.className = 'featured__table__row sg-injected-row'; // Added marker class
+            if (extraStyle) row.style = extraStyle;
+            row.innerHTML = `
+                <div class="featured__table__row__left">${left}</div>
+                <div class="featured__table__row__right">${right}</div>
+            `;
+            return row;
+        };
+
+        // Helper to format the timestamp
+        const lastUpdatedStr = new Date(ts).toLocaleString([], {
+            dateStyle: 'medium',
+            timeStyle: 'short'
+        });
+
+        // Achievement Row
+        const achHtml = `
+            <small style="opacity: 0.6;">Any%</small>
+            <span style="color: #eee; cursor: help;" data-ui-tooltip='{"rows":[{"columns":[{"name":">0 🏆"},{"name":"${stats.gamesAnyCompletion} / ${stats.eligible}","color":"#8f96a6"}]}]}'>
+                ${stats.pctAnyCompletion}%
+            </span>
+            <span style="margin: 0 5px; opacity: 0.3;">|</span>
+
+            <small style="opacity: 0.6;">>25%</small>
+            <span style="color: #eee; cursor: help;" data-ui-tooltip='{"rows":[{"columns":[{"name":">25% 🏆"},{"name":"${stats.games25Completion} / ${stats.eligible}","color":"#8f96a6"}]}]}'>
+                ${stats.pct25Completion}%
+            </span>
+            <span style="margin: 0 5px; opacity: 0.3;">|</span>
+
+            <small style="opacity: 0.6;">100%</small>
+            <span style="color: #eee; cursor: help;" data-ui-tooltip='{"rows":[{"columns":[{"name":"100% 🏆"},{"name":"${stats.games100Completion} / ${stats.eligible}","color":"#8f96a6"}]}]}'>
+                ${stats.pct100Completion}%
+            </span>
+            <span style="margin: 0 5px; opacity: 0.3;">|</span>
+
+            <small style="opacity: 0.6;">Avg Completion</small>
+            <span style="color: #eee;">${stats.compPct}%</span>
+        `;
+
+        // Playtime Row
+        const playHtml = `
+            <small style="opacity: 0.6;">>0 Hours</small>
+            <span style="color: #eee; cursor: help;" data-ui-tooltip='{"rows":[{"columns":[{"name":">0 Hours"},{"name":"${stats.anyHours} / ${stats.gamesWon}","color":"#8f96a6"}]}]}'>
+                ${stats.pctAnyHours}%
+            </span>
+            <span style="margin: 0 5px; opacity: 0.3;">|</span>
+
+            <small style="opacity: 0.6;">Avg Playtime</small>
+            <span style="color: #eee;">${stats.avgHours}h </span>
+        `;
+
+        // 1. Add Achievements
+        targetTable.appendChild(createSgRow('Achievements', achHtml));
+        // 2. Add Playtime
+        targetTable.appendChild(createSgRow('Playtime', playHtml));
+        // 3. Add Last Updated (using smaller font and subtle color)
+        targetTable.appendChild(createSgRow(
+            '<span style="opacity: 0.5; font-size: 10px;">Playstats Last Scanned</span>',
+            `<span style="opacity: 0.5; font-size: 10px;">${lastUpdatedStr}</span>`
+        ));
+
+        // Re-initialize SG Tooltips so the new data attributes work
+        if (typeof(main) !== 'undefined' && main.initTooltips) {
+            main.initTooltips();
+        }
     }
 
     /******** SUB RESOLUTION HELPERS ********/
@@ -1953,10 +2195,16 @@
                     ? creatorEl.textContent.trim().toLowerCase()
                     : null;
 
-                let winners;
+                let winners = [];
 
                 if (forcedWinner) {
-                    winners = [forcedWinner];
+                    const negativeUser = g.querySelector('.giveaway__column--negative a[href^="/user/"]');
+                    const isNegativeMatch = negativeUser && negativeUser.textContent.trim().toLowerCase() === forcedWinner;
+
+                    if (!isNegativeMatch) {
+                        // If they aren't in the negative column, we assume they are a winner on this page
+                        winners = [forcedWinner];
+                    }
                 } else {
                     winners = [...g.querySelectorAll('.giveaway__column--positive a[href^="/user/"]')]
                         .map(a => {
@@ -2015,6 +2263,26 @@
 
         const stats = computeUserStats(wins);
 
+        saveUserStatsToCache(username, stats);
+        refreshAnnotations();
+
+        const formatStatRow = (label, value, suffix = '', detail = '') => {
+            return `
+                <div style="line-height: 1.6; font-family: 'Segoe UI', Tahoma, sans-serif;">
+                    <span style="display: inline-block; width: 250px; font-weight: bold;">${label}</span>
+                    <span style="display: inline-block; width: 30px; text-align: right; font-weight: bold;">${value}${suffix}</span>
+                    <span style="margin-left: 10px; opacity: 0.7; font-size: 0.9em;">${detail}</span>
+                </div>`;
+        };
+
+        let html = '';
+        html += formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion, '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`);
+        html += formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion, '%', `(${stats.games25Completion}/${stats.eligible})`);
+        html += formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion, '%', `(${stats.games100Completion}/${stats.eligible})`);
+        html += formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct, '%');
+        html += formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours, '%', `(${stats.anyHours}/${stats.gamesWon})`);
+        html += formatStatRow('⏰ Avg. Game Playtime', stats.avgHours);
+
         document.getElementById('sgStatus').innerHTML = `
             <b>Showing detailed results for
             <a href="https://www.steamgifts.com/user/${scanState.userDisplay[username] ?? username}"
@@ -2023,20 +2291,7 @@
                 ${scanState.userDisplay[username] ?? username}
             </a></b><br>
 
-            🎮 <b>${stats.gamesAnyCompletion}</b> / ${stats.eligible}
-            games (<b>${stats.pctAnyCompletion}%</b>) have <b>&gt;0%</b> completion<br>
-
-            🏆 <b>${stats.games25Completion}</b> / ${stats.eligible}
-            games (<b>${stats.pct25Completion}%</b>) have <b>≥25%</b> completion<br>
-
-            ⭐ <b>${stats.games100Completion}</b> / ${stats.eligible}
-            games (<b>${stats.pct100Completion}%</b>) have <b>100%</b> completion<br>
-
-            🎗️ Avg. Achievement Percentage: <b>${stats.compPct}%</b><br>
-
-            ⏱️ Games with any Playtime: <b>${stats.anyHours}</b><br>
-
-            ⏰ Avg. Game Playtime: <b>${stats.avgHours}</b>
+             ${html}
         `;
 
          if (scanState.userPrivate[username]) {
@@ -2227,7 +2482,7 @@
 
             // 1. Game Name
             const tdName = document.createElement('td');
-            tdName.style = 'padding: 6px; border:1px solid #444; text-align: left; overflow: hidden; text-overflow: ellipsis;';
+            tdName.style = 'padding: 6px; border:1px solid #444; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
             if (r.url) {
                 const a = document.createElement('a');
                 a.href = r.url; a.target = '_blank'; a.style = 'color:#66c0f4; text-decoration:none;';
@@ -3190,12 +3445,34 @@
         return map;
     }
 
+    function isFullScan(username, whitelistOnly, fullCVOnly, startDateInput, endDateInput) {
+        // Only valid on a user's Won page
+        if (!isUserWonPage) return false;
+
+        const urlUsername = location.pathname
+                .split('/user/')[1]
+                .split('/')[0]
+                .toLowerCase();
+
+        const usernameMatch = urlUsername === username.toLowerCase();
+
+        const urlParams = new URLSearchParams(window.location.search);
+
+        // Check for SG native filters
+        const hasSgFilters = urlParams.has('search') || urlParams.has('type');
+
+        // Check for your script's specific filters (Whitelist, CV, Date, etc.)
+        const hasScriptFilters = whitelistOnly || fullCVOnly || startDateInput !== "" || endDateInput !== "";
+
+        return !hasSgFilters && !hasScriptFilters && usernameMatch;
+    }
+
     /************ MAIN ************/
     const runScan = async (useSteamCache) => {
         try {
             const mode = scanState.mode;
             const whitelistOnly = document.getElementById('sgWhitelistOnly').checked;
-            const FullCVOnly = document.getElementById('sgFullCvOnly').checked;
+            const fullCVOnly = document.getElementById('sgFullCvOnly').checked;
             const username = userInput.value.trim();
             scanState.userDisplay[username.toLowerCase()] ??= username;
             const creatorFilter = creatorInput.value.trim().toLowerCase();
@@ -3203,6 +3480,9 @@
             const startDateInput = document.getElementById('sgStartDate').value;
             const endDateInput   = document.getElementById('sgEndDate').value;
 
+            const isFullUserScan = isFullScan(username, whitelistOnly, fullCVOnly, startDateInput, endDateInput)
+
+            console.log (`Full scan? ${isFullUserScan}`);
             // Convert to UNIX seconds (or null)
             const startTs = startDateInput
                 ? Math.floor(new Date(startDateInput + 'T00:00:00Z').getTime() / 1000)
@@ -3253,14 +3533,14 @@
             /* -------------------------------------------------
                Creator giveaway filtering
             ------------------------------------------------- */
-            if (scanState.mode === 'group' && creatorFilter) {
+            if (creatorFilter) {
                 filteredWins = filteredWins.filter(g => g.creator === creatorFilter);
             }
 
             /* -------------------------------------------------
                Full CV filtering
             ------------------------------------------------- */
-            if (FullCVOnly) {
+            if (fullCVOnly) {
                 status('Filtering Full CV giveaways…');
                 await ensureEsgstCvData(filteredWins);
                 filteredWins = getFullCVWins(filteredWins);
@@ -3410,7 +3690,6 @@
             scanState.summary = summary;
             renderSummary(summary, membersSet);
             status(`Loaded ${summary.length} users`);
-
         } catch (err) {
             console.error('[Playstats]', err);
             status('Scan failed — see console');
@@ -3418,4 +3697,5 @@
     };
     document.getElementById('sgStart').onclick = () => runScan(true);
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
+    refreshAnnotations();
 })();
