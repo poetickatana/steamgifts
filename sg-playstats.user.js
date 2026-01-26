@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.6.0
+// @version      1.6.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -2249,7 +2249,7 @@
         return merged;
     }
 
-    function showUserDetail(username) {
+    function showUserDetail(username, fullScan = false) {
         // Remove any visible table first
         resultsWrap.querySelector('table')?.remove();
         resultsWrap.querySelector('#dismiss-table')?.remove();
@@ -2263,9 +2263,10 @@
 
         const stats = computeUserStats(wins);
 
-        saveUserStatsToCache(username, stats);
-        refreshAnnotations();
-
+        if (fullScan) {
+            saveUserStatsToCache(username, stats);
+            refreshAnnotations();
+        }
         const formatStatRow = (label, value, suffix = '', detail = '') => {
             return `
                 <div style="line-height: 1.6; font-family: 'Segoe UI', Tahoma, sans-serif;">
@@ -3480,9 +3481,8 @@
             const startDateInput = document.getElementById('sgStartDate').value;
             const endDateInput   = document.getElementById('sgEndDate').value;
 
-            const isFullUserScan = isFullScan(username, whitelistOnly, fullCVOnly, startDateInput, endDateInput)
+            const fullScan = isFullScan(username, whitelistOnly, fullCVOnly, startDateInput, endDateInput)
 
-            console.log (`Full scan? ${isFullUserScan}`);
             // Convert to UNIX seconds (or null)
             const startTs = startDateInput
                 ? Math.floor(new Date(startDateInput + 'T00:00:00Z').getTime() / 1000)
@@ -3671,7 +3671,7 @@
                 scanState.membersSet = null;
 
                 saveScanState();
-                showUserDetail(scanState.activeUser);
+                showUserDetail(scanState.activeUser, fullScan);
                 return;
             }
 
@@ -3699,5 +3699,3 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
-
-
