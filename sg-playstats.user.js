@@ -723,7 +723,7 @@
         if (!input) return;
 
         // Match /user/<name>/giveaways/won
-        const match = location.pathname.match(/^\/user\/([^/]+)\/giveaways\/won\/?$/);
+        const match = location.pathname.match(/^\/user\/([^/]+)\/giveaways\/won/);
         if (!match) return;
 
         const usernameFromURL = match[1];
