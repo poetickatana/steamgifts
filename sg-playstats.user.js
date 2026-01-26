@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.6.3
+// @version      1.6.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -489,6 +489,12 @@
            background: #2a475e;
        }
        #sg-user-table thead th {
+           position: sticky;
+           top: 0;
+           z-index: 2;
+           background: #2a475e;
+       }
+       #sg-flat-table thead th {
            position: sticky;
            top: 0;
            z-index: 2;
