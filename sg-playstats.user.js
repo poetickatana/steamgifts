@@ -650,7 +650,7 @@
         </label>
     </div>
     <div class="annotate-toggle-wrapper" id="sgAnnotateToggleRow">
-        <span class="annotate-toggle-label">Result Annotation</span>
+        <span class="annotate-toggle-label">Results Annotation</span>
         <label class="annotate-toggle-switch">
             <input type="checkbox" id="sgAnnotateToggle">
             <span class="annotate-toggle-slider">
@@ -1752,8 +1752,8 @@
         targetTable.appendChild(createSgRow('Playtime', playHtml));
         // 3. Add Last Updated (using smaller font and subtle color)
         targetTable.appendChild(createSgRow(
-            '<span style="opacity: 0.5; font-size: 10px;"></span>',
-            `<span style="opacity: 0.5; font-size: 10px;">Last Checked ${lastUpdatedStr}</span>`
+            '<span style="opacity: 0.5; font-size: 11px;"></span>',
+            `<span style="opacity: 0.5; font-style: italic; font-size: 11px;">Last Checked ${lastUpdatedStr}</span>`
         ));
 
         // Re-initialize SG Tooltips so the new data attributes work
