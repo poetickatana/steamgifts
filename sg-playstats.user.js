@@ -1682,7 +1682,7 @@
 
     async function injectStatsToSgTable() {
         const columns = document.querySelectorAll('.featured__table__column');
-        const targetTable = columns[1];
+        const targetTable = columns[0];
         if (!targetTable) return;
         const pathParts = window.location.pathname.split('/');
         const profileOwner = pathParts[2]?.toLowerCase();
@@ -3699,3 +3699,4 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
+
