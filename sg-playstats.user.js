@@ -1752,8 +1752,8 @@
         targetTable.appendChild(createSgRow('Playtime', playHtml));
         // 3. Add Last Updated (using smaller font and subtle color)
         targetTable.appendChild(createSgRow(
-            '<span style="opacity: 0.5; font-size: 10px;">Playstats Last Scanned</span>',
-            `<span style="opacity: 0.5; font-size: 10px;">${lastUpdatedStr}</span>`
+            '<span style="opacity: 0.5; font-size: 10px;"></span>',
+            `<span style="opacity: 0.5; font-size: 10px;">Last Checked ${lastUpdatedStr}</span>`
         ));
 
         // Re-initialize SG Tooltips so the new data attributes work
@@ -3699,4 +3699,5 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
+
 
