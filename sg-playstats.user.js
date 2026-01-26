@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.6.1
+// @version      1.6.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1586,29 +1586,29 @@
             games100Completion,
 
             pctAnyCompletion: eligible
-                ? Math.round((gamesAnyCompletion / eligible) * 100)
+                ? (Math.round((gamesAnyCompletion / eligible) * 1000) / 10)
                 : 0,
 
             pct25Completion: eligible
-                ? Math.round((games25Completion / eligible) * 100)
+                ? (Math.round((games25Completion / eligible) * 1000) / 10)
                 : 0,
 
             pct100Completion: eligible
-                ? Math.round((games100Completion / eligible) * 100)
+                ? (Math.round((games100Completion / eligible) * 1000) / 10)
                 : 0,
 
             compPct: totalAvailable
-                ? Math.round((totalUnlocked / totalAvailable) * 100)
+                ? (Math.round((totalUnlocked / totalAvailable) * 1000) / 10)
                 : 0,
 
             totalHours: totalHours / 60,
 
             anyHours: anyHours,
 
-            pctAnyHours: Math.round((anyHours / wins.length) * 100),
+            pctAnyHours: (Math.round((anyHours / wins.length) * 1000) / 10),
 
             avgHours: anyHours
-                ? Math.trunc((totalHours / 60) / anyHours * 100) / 100
+                ? Math.round((totalHours / 60) / anyHours * 10) / 10
                 : 0
         };
     }
@@ -2282,7 +2282,7 @@
         html += formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion, '%', `(${stats.games100Completion}/${stats.eligible})`);
         html += formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct, '%');
         html += formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours, '%', `(${stats.anyHours}/${stats.gamesWon})`);
-        html += formatStatRow('⏰ Avg. Game Playtime', stats.avgHours);
+        html += formatStatRow('⏰ Avg. Game Playtime', stats.avgHours, 'h');
 
         document.getElementById('sgStatus').innerHTML = `
             <b>Showing detailed results for
