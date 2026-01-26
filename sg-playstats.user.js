@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.6.2
+// @version      1.6.3
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -493,6 +493,32 @@
            top: 0;
            z-index: 2;
            background: #2a475e;
+       }
+       .sg-back-to-top {
+           display: none;
+           position: sticky;
+           left: 50%;
+           transform: translateX(-50%);
+           bottom: 0px;
+           width: 28px;
+           height: 28px;
+           background: rgba(42, 71, 94, 0.4);
+           color: rgba(255, 255, 255, 0.7);
+           border: 1px solid rgba(102, 192, 244, 0.3);
+           border-radius: 4px;
+           cursor: pointer;
+           z-index: 99;
+           font-size: 14px;
+           line-height: 26px;
+           text-align: center;
+           transition: all 0.2s ease-in-out;
+       }
+
+       .sg-back-to-top:hover {
+           background: rgba(102, 192, 244, 0.8); /* Becomes visible on hover */
+           color: #fff;
+           border-color: #66c0f4;
+           transform: translateX(-50%) translateY(-2px); /* Slight lift effect */
        }
        .sg-options-left {
            display: flex;
@@ -2454,6 +2480,9 @@
 
         resultsWrap.appendChild(csvBtn);
 
+        resultsWrap.style.maxHeight = '70vh';
+        resultsWrap.style.overflowY = 'auto';
+
         const table = document.createElement('table');
         table.id = 'sg-flat-table';
         table.style = `width: 100%; margin-top: 10px; border-collapse: collapse; table-layout: fixed; text-align: center; white-space: nowrap;`;
@@ -2547,6 +2576,8 @@
 
         table.appendChild(tbody);
         resultsWrap.appendChild(table);
+
+        attachBackToTop(resultsWrap);
     }
 
     /************ RENDER SUMMARY ************/
@@ -2608,6 +2639,9 @@
             };
 
         resultsWrap.appendChild(csvBtn);
+
+        resultsWrap.style.maxHeight = '70vh';
+        resultsWrap.style.overflowY = 'auto';
 
         const flatViewBtn = document.createElement('button');
             flatViewBtn.id = 'flat-view';
@@ -2721,6 +2755,8 @@
             });
             table.appendChild(tbody);
             resultsWrap.appendChild(table);
+
+            attachBackToTop(resultsWrap);
 
             if (summarySort.col !== null) {
                 sortTable(table, summarySort.col, summarySort.asc);
@@ -2979,7 +3015,7 @@
         return new Promise(resolve => {
             GM_xmlhttpRequest({
                 method: 'GET',
-                url: `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${settings.steamApiKey}&steamid=${steamid}&include_appinfo=true`,
+                url: `https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/?key=${settings.steamApiKey}&steamid=${steamid}&include_appinfo=true&skip_unvetted_apps=false`,
                 onload: r => resolve(JSON.parse(r.responseText).response.games || [])
             });
         });
@@ -3153,6 +3189,25 @@
         }
     }
 
+    function attachBackToTop(container) {
+        const existing = container.querySelector('.sg-back-to-top');
+        if (existing) existing.remove();
+
+        const btn = document.createElement('div');
+        btn.className = 'sg-back-to-top'; // Changed to class
+        btn.innerHTML = '︿';
+
+        container.onscroll = () => {
+            btn.style.display = container.scrollTop > 300 ? 'block' : 'none';
+        };
+
+        btn.onclick = () => {
+            container.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        container.appendChild(btn);
+    }
+
     function render(results) {
         clearResults();
 
@@ -3204,7 +3259,10 @@
                 }
             };
 
-            resultsWrap.appendChild(csvBtn);
+        resultsWrap.appendChild(csvBtn);
+
+        resultsWrap.style.maxHeight = '70vh';
+        resultsWrap.style.overflowY = 'auto';
 
         const table = document.createElement('table');
         table.style = `
@@ -3329,6 +3387,8 @@
         table.appendChild(tbody);
 
         resultsWrap.appendChild(table);
+
+        attachBackToTop(resultsWrap);
     }
 
     /************ GROUP MEMBERSHIP ************/
