@@ -67,7 +67,7 @@
     };
 
     let dateFormatMDY = true; // default to MM-DD-YYYY
-    let annotateON = false; // default to ON
+    let annotateON = true; // default to ON
 
     let isDragging = false;
     let dragMoved = false;
@@ -2303,18 +2303,18 @@
             return `
                 <div style="line-height: 1.6; font-family: 'Segoe UI', Tahoma, sans-serif;">
                     <span style="display: inline-block; width: 250px; font-weight: bold;">${label}</span>
-                    <span style="display: inline-block; width: 30px; text-align: right; font-weight: bold;">${value}${suffix}</span>
+                    <span style="display: inline-block; width: 50px; text-align: right; font-weight: bold;">${value}${suffix}</span>
                     <span style="margin-left: 10px; opacity: 0.7; font-size: 0.9em;">${detail}</span>
                 </div>`;
         };
 
         let html = '';
-        html += formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion, '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`);
-        html += formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion, '%', `(${stats.games25Completion}/${stats.eligible})`);
-        html += formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion, '%', `(${stats.games100Completion}/${stats.eligible})`);
-        html += formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct, '%');
-        html += formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours, '%', `(${stats.anyHours}/${stats.gamesWon})`);
-        html += formatStatRow('⏰ Avg. Game Playtime', stats.avgHours, 'h');
+        html += formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion.toFixed(1), '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`);
+        html += formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion.toFixed(1), '%', `(${stats.games25Completion}/${stats.eligible})`);
+        html += formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion.toFixed(1), '%', `(${stats.games100Completion}/${stats.eligible})`);
+        html += formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct.toFixed(1), '%');
+        html += formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`);
+        html += formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h');
 
         document.getElementById('sgStatus').innerHTML = `
             <b>Showing detailed results for
