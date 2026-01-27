@@ -34,7 +34,7 @@
 
     const isGroupPage = /^https:\/\/www\.steamgifts\.com\/group\/[^/]+\/[^/]+/.test(location.href);
     const isUserWonPage = /^\/user\/[^/]+\/giveaways\/won/.test(location.pathname);
-    const ESGST_BATCH_SIZE = 200;
+    const ESGST_BATCH_SIZE = 400;
     const ESGST_CACHE_KEY = 'esgst_cv_cache_v1';
     const ESGST_CACHE_TTL = 24 * 60 * 60; // seconds
 
@@ -1571,7 +1571,7 @@
             const res = await fetch(
                 `https://esgst.rafaelgomes.xyz/api/games?${params}`
             );
-console.log(`Fetching games from ESGST: ${res}`);
+
             if (!res.ok) {
                 throw new Error(`ESGST GetGames failed (${res.status})`);
             }
