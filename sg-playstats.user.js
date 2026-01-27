@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.6.2
+// @version      1.7
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -67,7 +67,8 @@
     };
 
     let dateFormatMDY = true; // default to MM-DD-YYYY
-    let annotateON = true; // default to ON
+    let annotateON = false; // default to ON
+    let ignoreDlcON = false; // default to ON
 
     let isDragging = false;
     let dragMoved = false;
@@ -194,6 +195,7 @@
         .annotate-toggle-wrapper {
             display: flex;
             align-items: center;
+            margin-bottom: 12px;
             justify-content: space-between;
             font-size: 13px;
             color: #c7d5e0;
@@ -289,6 +291,103 @@
             opacity: 1;
         }
 
+        .ignoredlc-toggle-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #c7d5e0;
+            white-space: nowrap;
+        }
+
+        .ignoredlc-toggle-label  {
+            font-weight:bold;
+            font-size:13px;
+            color:#c7d5e0;
+        }
+
+        .ignoredlc-toggle-switch {
+            position: relative;
+            display: inline-block;
+            /* Reduced size */
+            width: 44px;
+            height: 18px;
+        }
+
+        .ignoredlc-toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #555;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .ignoredlc-toggle-slider::before {
+            content: "";
+            position: absolute;
+            /* Knob is 4px smaller than the container height to create a 2px margin */
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background-color: #fff; /* White knob often looks better on small switches */
+            border-radius: 50%;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+
+        .ignoredlc-toggle-switch input:checked + .ignoredlc-toggle-slider::before {
+            /* (Width - Knob Width - Margins) = (44 - 14 - 4) = 26px */
+            transform: translateX(26px);
+        }
+
+        .ignoredlc-toggle-switch input:checked + .ignoredlc-toggle-slider {
+            background: #66c0f4;
+        }
+
+        .ignoredlc-toggle-text {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: 700;
+            font-size: 8px;
+            color: #fff;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            white-space: nowrap; /* Prevents text from wrapping */
+        }
+
+        .ignoredlc-toggle-switch input:not(:checked) + .ignoredlc-toggle-slider .ignoredlc-off {
+            opacity: 0; /* Using opacity: 0 for a cleaner look on small sizes */
+        }
+
+        .ignoredlc-toggle-switch input:checked + .ignoredlc-toggle-slider .ignoredlc-on {
+            opacity: 0;
+        }
+
+        .ignoredlc-off {
+            right: 6px;
+            opacity: 1;
+        }
+        .ignoredlc-on {
+            left: 6px;
+            opacity: 0;
+        }
+
+        /* --- Toggle Logic --- */
+        .ignoredlc-toggle-switch input:not(:checked) + .ignoredlc-toggle-slider .ignoredlc-off {
+            opacity: 1;
+        }
+        .ignoredlc-toggle-switch input:not(:checked) + .ignoredlc-toggle-slider .ignoredlc-on {
+            opacity: 0;
+        }
+        .ignoredlc-toggle-switch input:checked + .ignoredlc-toggle-slider .ignoredlc-off {
+            opacity: 0;
+        }
+        .ignoredlc-toggle-switch input:checked + .ignoredlc-toggle-slider .ignoredlc-on {
+            opacity: 1;
+        }
         .sg-pill-group {
             display: flex;
             border-radius: 8px;
@@ -682,12 +781,22 @@
         </label>
     </div>
     <div class="annotate-toggle-wrapper" id="sgAnnotateToggleRow">
-        <span class="annotate-toggle-label">Results Annotation</span>
+        <span class="annotate-toggle-label">Annotate Results</span>
         <label class="annotate-toggle-switch">
             <input type="checkbox" id="sgAnnotateToggle">
             <span class="annotate-toggle-slider">
                 <span class="annotate-toggle-text annotate-off">OFF</span>
                 <span class="annotate-toggle-text annotate-on">ON</span>
+            </span>
+        </label>
+    </div>
+    <div class="ignoredlc-toggle-wrapper" id="sgIgnoreDlcToggleRow">
+        <span class="ignoredlc-toggle-label">Ignore DLCs</span>
+        <label class="ignoredlc-toggle-switch">
+            <input type="checkbox" id="sgIgnoreDlcToggle">
+            <span class="ignoredlc-toggle-slider">
+                <span class="ignoredlc-toggle-text ignoredlc-off">OFF</span>
+                <span class="ignoredlc-toggle-text ignoredlc-on">ON</span>
             </span>
         </label>
     </div>
@@ -825,6 +934,11 @@
     const annotateToggleRow = document.getElementById('sgAnnotateToggleRow');
     if (annotateToggleRow) {
         settingsPanel.appendChild(annotateToggleRow);
+    }
+
+    const ignoreDlcToggleRow = document.getElementById('sgIgnoreDlcToggleRow');
+    if (ignoreDlcToggleRow) {
+        settingsPanel.appendChild(ignoreDlcToggleRow);
     }
 
     topControls.appendChild(restoreBtn);
@@ -1166,6 +1280,29 @@
         )
     );
 
+    const separator3 = document.createElement('div');
+    separator3.style = "height: 1px; background: #3b5871; margin: 10px 0; opacity: 0.5;";
+    debugSection.content.appendChild(separator3)
+
+    const debugCacheBtn = document.createElement('button');
+    debugCacheBtn.textContent = '🧪 View Cached DLCs';
+    debugCacheBtn.className = 'sg-secondary-btn';
+
+    debugCacheBtn.onclick = () => {
+        const cache = GM_getValue(ESGST_CACHE_KEY, null);
+        if (!cache) {
+            alert('No ESGST cache found');
+            return;
+        }
+
+        console.table(
+            Object.entries(cache.apps)
+                .filter(([, v]) => v.isDlc)
+        );
+    };
+
+    debugSection.content.appendChild(debugCacheBtn);
+
     sgSettingsBtn.onclick = () => {
         const open = settingsPanel.style.display === 'block';
         settingsPanel.style.display = open ? 'none' : 'block';
@@ -1210,6 +1347,23 @@
 
         // Save to localStorage
         localStorage.setItem('playstats_annotate', JSON.stringify(annotateON));
+        refreshAnnotations();
+    });
+
+    const ignoreDlcToggle = document.getElementById('sgIgnoreDlcToggle');
+
+    // Load saved state from localStorage (default to true if not set)
+    const savedIgnoreDlc = localStorage.getItem('playstats_ignoreDlc');
+    ignoreDlcToggle.checked = savedIgnoreDlc !== null ? JSON.parse(savedIgnoreDlc) : ignoreDlcON;
+
+    // Set the variable to match saved state
+    ignoreDlcON = ignoreDlcToggle.checked;
+
+    ignoreDlcToggle.addEventListener('change', async () => {
+        ignoreDlcON = ignoreDlcToggle.checked;
+
+        // Save to localStorage
+        localStorage.setItem('playstats_ignoreDlc', JSON.stringify(ignoreDlcON));
         refreshAnnotations();
     });
 
@@ -1392,6 +1546,128 @@
         }
 
         await Promise.all(workers);
+    }
+
+    // ****** IGNORE DLC HELPERS ******* //
+    async function queryEsgstGames(appIds, subIds) {
+        const merged = {
+            found: { apps: {}, subs: {} }
+        };
+
+        const appChunks = chunkArray(appIds, ESGST_BATCH_SIZE);
+        const subChunks = chunkArray(subIds, ESGST_BATCH_SIZE);
+        const maxChunks = Math.max(appChunks.length, subChunks.length);
+
+        for (let i = 0; i < maxChunks; i++) {
+            const apps = appChunks[i] ?? [];
+            const subs = subChunks[i] ?? [];
+
+            if (!apps.length && !subs.length) continue;
+
+            const params = new URLSearchParams();
+            if (apps.length) params.set('app_ids', apps.join(','));
+            if (subs.length) params.set('sub_ids', subs.join(','));
+
+            const res = await fetch(
+                `https://esgst.rafaelgomes.xyz/api/games?${params}`
+            );
+console.log(`Fetching games from ESGST: ${res}`);
+            if (!res.ok) {
+                throw new Error(`ESGST GetGames failed (${res.status})`);
+            }
+
+            const json = await res.json();
+            const found = json?.result?.found;
+
+            if (found?.apps) Object.assign(merged.found.apps, found.apps);
+            if (found?.subs) Object.assign(merged.found.subs, found.subs);
+        }
+
+        return merged;
+    }
+
+    function getMissingDlcIds(wins, cache) {
+        const apps = new Set();
+        const subs = new Set();
+
+        for (const g of wins) {
+            if (g.app && cache?.apps?.[g.app]?.isDlc === undefined) {
+                apps.add(g.app);
+            }
+            if (g.sub && cache?.subs?.[g.sub]?.isDlc === undefined) {
+                subs.add(g.sub);
+            }
+        }
+
+        return {
+            app_ids: [...apps],
+            sub_ids: [...subs]
+        };
+    }
+
+    function mergeDlcIntoCache(cache, games) {
+        for (const [id, data] of Object.entries(games.found.apps || {})) {
+            cache.apps[id] ??= {};
+            cache.apps[id].isDlc = data.base !== null;
+            cache.apps[id].baseApp = data.base;
+        }
+
+        for (const [id, data] of Object.entries(games.found.subs || {})) {
+            cache.subs[id] ??= {};
+            cache.subs[id].isDlc = data.base !== null;
+            cache.subs[id].baseApp = data.base;
+        }
+    }
+
+    async function ensureEsgstDlcData(wins) {
+        let cache = await loadEsgstCvCache();
+        if (!cache) {
+            cache = {
+                fetchedAt: 0,
+                apps: {},
+                subs: {}
+            };
+        }
+
+        const { app_ids, sub_ids } = getMissingDlcIds(wins, cache);
+
+        if (!app_ids.length && !sub_ids.length) {
+            return;
+        }
+
+        const games = await queryEsgstGames(app_ids, sub_ids);
+
+        // Mark requested IDs as checked even if ESGST returns nothing
+        for (const id of app_ids) {
+            cache.apps[id] ??= {};
+            cache.apps[id].isDlc ??= false;
+            cache.apps[id].baseApp ??= null;
+        }
+        for (const id of sub_ids) {
+            cache.subs[id] ??= {};
+            cache.subs[id].isDlc ??= false;
+            cache.subs[id].baseApp ??= null;
+        }
+
+        mergeDlcIntoCache(cache, games);
+
+        cache.fetchedAt = Math.floor(Date.now() / 1000);
+        GM_setValue(ESGST_CACHE_KEY, cache);
+    }
+
+    function filterOutDlcWins(wins) {
+        const cache = GM_getValue(ESGST_CACHE_KEY, null);
+        if (!cache) return wins; // fail open
+
+        return wins.filter(win => {
+            if (win.sub) return true;
+
+            if (!win.app) return true; // safety
+            const entry = cache.apps?.[win.app];
+            if (!entry) return true; // unknown → keep
+
+            return entry.isDlc !== true;
+        });
     }
 
     // ****** FULL CV HELPERS ******* //
@@ -3601,6 +3877,15 @@
             ------------------------------------------------- */
             if (creatorFilter) {
                 filteredWins = filteredWins.filter(g => g.creator === creatorFilter);
+            }
+
+            /* -------------------------------------------------
+               Ignore DLC filtering
+            ------------------------------------------------- */
+            if (ignoreDlcON) {
+                status('Filtering DLC giveaways…');
+                await ensureEsgstDlcData(filteredWins);
+                filteredWins = filterOutDlcWins(filteredWins);
             }
 
             /* -------------------------------------------------
