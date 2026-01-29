@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.7
+// @version      1.7.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1666,7 +1666,11 @@
             const entry = cache.apps?.[win.app];
             if (!entry) return true; // unknown → keep
 
-            return entry.isDlc !== true;
+            if (entry.isDlc) {
+                console.info(`[Playstats] Ignoring DLC win: ${win.name}`);
+            return false;
+            }
+        return true;
         });
     }
 
@@ -1755,10 +1759,22 @@
         const subs = new Set();
 
         for (const g of wins) {
-            if (g.app && !cache?.apps?.[g.app]) {
+            if (
+                g.app &&
+                (
+                    !cache?.apps?.[g.app] ||
+                    (!cache.apps[g.app].ncv && !cache.apps[g.app].rcv)
+                )
+            ) {
                 apps.add(g.app);
             }
-            if (g.sub && !cache?.subs?.[g.sub]) {
+            if (
+                g.sub &&
+                (
+                    !cache?.subs?.[g.sub] ||
+                    (!cache.subs[g.sub].ncv && !cache.subs[g.sub].rcv)
+                )
+            ) {
                 subs.add(g.sub);
             }
         }
@@ -3893,6 +3909,7 @@
             ------------------------------------------------- */
             if (fullCVOnly) {
                 status('Filtering Full CV giveaways…');
+                console.log (`filtering full CV`);
                 await ensureEsgstCvData(filteredWins);
                 filteredWins = getFullCVWins(filteredWins);
             }
