@@ -3826,7 +3826,7 @@
         const hasSgFilters = urlParams.has('search') || urlParams.has('type');
 
         // Check for your script's specific filters (Whitelist, CV, Date, etc.)
-        const hasScriptFilters = whitelistOnly || fullCVOnly || startDateInput !== "" || endDateInput !== "";
+        const hasScriptFilters = whitelistOnly || fullCVOnly || creatorFilter!== "" || startDateInput !== "" || endDateInput !== "";
 
         return !hasSgFilters && !hasScriptFilters && usernameMatch;
     }
@@ -3844,7 +3844,7 @@
             const startDateInput = document.getElementById('sgStartDate').value;
             const endDateInput   = document.getElementById('sgEndDate').value;
 
-            const fullScan = isFullScan(username, whitelistOnly, fullCVOnly, startDateInput, endDateInput)
+            const fullScan = isFullScan(username, whitelistOnly, fullCVOnly, creatorFilter, startDateInput, endDateInput)
 
             // Convert to UNIX seconds (or null)
             const startTs = startDateInput
@@ -4072,3 +4072,4 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
+
