@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.7.3
+// @version      1.7.4
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -3809,7 +3809,7 @@
         return map;
     }
 
-    function isFullScan(username, whitelistOnly, fullCVOnly, startDateInput, endDateInput) {
+    function isFullScan(username, whitelistOnly, fullCVOnly, creatorFilter, startDateInput, endDateInput) {
         // Only valid on a user's Won page
         if (!isUserWonPage) return false;
 
@@ -4072,5 +4072,6 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
+
 
 
