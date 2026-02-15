@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.7.1
+// @version      1.7.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -67,8 +67,8 @@
     };
 
     let dateFormatMDY = true; // default to MM-DD-YYYY
-    let annotateON = false; // default to ON
-    let ignoreDlcON = false; // default to ON
+    let annotateON = true; // default to ON
+    let ignoreDlcON = false; // default to OFF
 
     let isDragging = false;
     let dragMoved = false;
@@ -92,7 +92,14 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
-
+        .sg-creator-field {
+           display:flex;
+           align-items:center;
+        }
+        .sg-creator-field span {
+            min-width:120px;
+            white-space:nowrap;
+        }
         .date-toggle-wrapper {
             display: flex;
             align-items: center;
@@ -481,7 +488,7 @@
         .sg-right {
             display: grid;
             grid-template-columns: auto 1fr;
-            column-gap: 28px;
+            column-gap: 24px;
             row-gap: 12px;
             align-items: start;
         }
@@ -738,10 +745,12 @@
                                 <input type="checkbox" id="sgFullCvOnly" title="Only include Full CV giveaways">
                                 <span>Full CV</span>
                             </label>
-
-                            <input id="sgCreatorFilter"
-                                   placeholder="Filter by creator"
-                                   title="Filter giveaways by creator (group mode only)">
+                            <label class="sg-creator-field">
+                                <span>Filter by creator</span>
+                                <input id="sgCreatorFilter"
+                                       placeholder="username"
+                                       title="Filter giveaways by creator (group mode only)">
+                            </label>
                         </div>
                     </div>
 
@@ -818,11 +827,7 @@
 
     const creatorInput = document.getElementById('sgCreatorFilter');
 
-    if (window.location.pathname.includes('/group/')) {
-        creatorInput.style.display = 'inline-block';
-    } else {
-        creatorInput.style.display = 'none';
-    }
+    creatorInput.style.display = 'inline-block';
 
     pills.forEach(pill => {
         const mode = pill.dataset.mode;
