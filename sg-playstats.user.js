@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.7.4
+// @version      1.7.5
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -817,8 +817,20 @@
     const savedLeft = localStorage.getItem('playstats_panelLeft');
 
     if (savedTop !== null && savedLeft !== null) {
-        panel.style.top = savedTop + 'px';
-        panel.style.left = savedLeft + 'px';
+        const top = parseInt(savedTop, 10);
+        const left = parseInt(savedLeft, 10);
+
+        const panelWidth  = panel.offsetWidth;
+        const panelHeight = panel.offsetHeight;
+
+        const maxLeft = window.innerWidth  - panelWidth;
+        const maxTop  = window.innerHeight - panelHeight;
+
+        const clampedLeft = Math.max(0, Math.min(left, maxLeft));
+        const clampedTop  = Math.max(0, Math.min(top,  maxTop));
+
+        panel.style.top  = clampedTop + 'px';
+        panel.style.left = clampedLeft + 'px';
         panel.style.right = 'auto';
     }
 
@@ -1404,6 +1416,23 @@
         body.style.display = expanded ? 'block' : 'none';
         if (expanded) {
             panel.style.width = PANEL_EXPANDED_WIDTH + 'px';
+            requestAnimationFrame(() => {
+                const rect = panel.getBoundingClientRect();
+
+                let left = rect.left;
+                let top  = rect.top;
+
+                if (rect.right > window.innerWidth) {
+                    left = window.innerWidth - rect.width;
+                }
+
+                if (rect.bottom > window.innerHeight) {
+                    top = window.innerHeight - rect.height;
+                }
+
+                panel.style.left = Math.max(0, left) + 'px';
+                panel.style.top  = Math.max(0, top)  + 'px';
+            });
         } else {
             panel.style.width = 'fit-content';
         }
@@ -1437,8 +1466,22 @@
 
         if (!dragMoved) return;
 
-        panel.style.left = (e.clientX - dragOffsetX) + 'px';
-        panel.style.top  = (e.clientY - dragOffsetY) + 'px';
+        const newLeft = e.clientX - dragOffsetX;
+        const newTop  = e.clientY - dragOffsetY;
+
+        const rect = panel.getBoundingClientRect();
+        const panelWidth  = rect.width;
+        const panelHeight = rect.height;
+
+        const maxLeft = window.innerWidth  - panelWidth;
+        const maxTop  = window.innerHeight - panelHeight;
+
+        // Clamp
+        const clampedLeft = Math.max(0, Math.min(newLeft, maxLeft));
+        const clampedTop  = Math.max(0, Math.min(newTop,  maxTop));
+
+        panel.style.left = clampedLeft + 'px';
+        panel.style.top  = clampedTop  + 'px';
     });
 
     document.addEventListener('mouseup', () => {
@@ -4072,6 +4115,3 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
-
-
-
