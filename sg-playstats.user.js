@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.8.2
+// @version      1.8.3
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -68,6 +68,7 @@
 
     let dateFormatMDY = true; // default to MM-DD-YYYY
     let annotateON = true; // default to ON
+    let highlightWLON = false; // default to OFF
     let ignoreDlcON = false; // default to OFF
 
     let isDragging = false;
@@ -298,6 +299,105 @@
             opacity: 0;
         }
         .annotate-toggle-switch input:checked + .annotate-toggle-slider .annotate-on {
+            opacity: 1;
+        }
+
+        .highlightwl-toggle-wrapper {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #c7d5e0;
+            white-space: nowrap;
+        }
+
+        .highlightwl-toggle-label  {
+            font-weight:bold;
+            font-size:13px;
+            color:#c7d5e0;
+        }
+
+        .highlightwl-toggle-switch {
+            position: relative;
+            display: inline-block;
+            /* Reduced size */
+            width: 44px;
+            height: 18px;
+        }
+
+        .highlightwl-toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #555;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .highlightwl-toggle-slider::before {
+            content: "";
+            position: absolute;
+            /* Knob is 4px smaller than the container height to create a 2px margin */
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background-color: #fff; /* White knob often looks better on small switches */
+            border-radius: 50%;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+
+        .highlightwl-toggle-switch input:checked + .highlightwl-toggle-slider::before {
+            /* (Width - Knob Width - Margins) = (44 - 14 - 4) = 26px */
+            transform: translateX(26px);
+        }
+
+        .highlightwl-toggle-switch input:checked + .highlightwl-toggle-slider {
+            background: #66c0f4;
+        }
+
+        .highlightwl-toggle-text {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: 700;
+            font-size: 8px;
+            color: #fff;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            white-space: nowrap; /* Prevents text from wrapping */
+        }
+
+        .highlightwl-toggle-switch input:not(:checked) + .highlightwl-toggle-slider .highlightwl-off {
+            opacity: 0; /* Using opacity: 0 for a cleaner look on small sizes */
+        }
+
+        .highlightwl-toggle-switch input:checked + .highlightwl-toggle-slider .highlightwl-on {
+            opacity: 0;
+        }
+
+        .highlightwl-off {
+            right: 6px;
+            opacity: 1;
+        }
+        .highlightwl-on {
+            left: 6px;
+            opacity: 0;
+        }
+
+        /* --- Toggle Logic --- */
+        .highlightwl-toggle-switch input:not(:checked) + .highlightwl-toggle-slider .highlightwl-off {
+            opacity: 1;
+        }
+        .highlightwl-toggle-switch input:not(:checked) + .highlightwl-toggle-slider .highlightwl-on {
+            opacity: 0;
+        }
+        .highlightwl-toggle-switch input:checked + .highlightwl-toggle-slider .highlightwl-off {
+            opacity: 0;
+        }
+        .highlightwl-toggle-switch input:checked + .highlightwl-toggle-slider .highlightwl-on {
             opacity: 1;
         }
 
@@ -802,6 +902,16 @@
             </span>
         </label>
     </div>
+    <div class="highlightwl-toggle-wrapper" id="sgHighlightWLToggleRow">
+        <span class="highlightwl-toggle-label">Highlight Whitelist Only</span>
+        <label class="highlightwl-toggle-switch">
+            <input type="checkbox" id="sgHighlightWLToggle">
+            <span class="highlightwl-toggle-slider">
+                <span class="highlightwl-toggle-text highlightwl-off">OFF</span>
+                <span class="highlightwl-toggle-text highlightwl-on">ON</span>
+            </span>
+        </label>
+    </div>
     <div class="ignoredlc-toggle-wrapper" id="sgIgnoreDlcToggleRow">
         <span class="ignoredlc-toggle-label">Ignore DLCs</span>
         <label class="ignoredlc-toggle-switch">
@@ -954,6 +1064,11 @@
     const annotateToggleRow = document.getElementById('sgAnnotateToggleRow');
     if (annotateToggleRow) {
         settingsPanel.appendChild(annotateToggleRow);
+    }
+
+    const highlightWLToggleRow = document.getElementById('sgHighlightWLToggleRow');
+    if (highlightWLToggleRow) {
+        settingsPanel.appendChild(highlightWLToggleRow);
     }
 
     const ignoreDlcToggleRow = document.getElementById('sgIgnoreDlcToggleRow');
@@ -1368,6 +1483,22 @@
         // Save to localStorage
         localStorage.setItem('playstats_annotate', JSON.stringify(annotateON));
         refreshAnnotations();
+    });
+
+    const highlightWLToggle = document.getElementById('sgHighlightWLToggle');
+
+    // Load saved state from localStorage (default to true if not set)
+    const savedHighlightWL = localStorage.getItem('playstats_highlightwl');
+    highlightWLToggle.checked = savedHighlightWL !== null ? JSON.parse(savedHighlightWL) : highlightWLON;
+
+    // Set the variable to match saved state
+    highlightWLON = highlightWLToggle.checked;
+
+    highlightWLToggle.addEventListener('change', async () => {
+        highlightWLON = highlightWLToggle.checked;
+
+        // Save to localStorage
+        localStorage.setItem('playstats_highlightwl', JSON.stringify(highlightWLON));
     });
 
     const ignoreDlcToggle = document.getElementById('sgIgnoreDlcToggle');
@@ -2675,7 +2806,7 @@
                 barWidth = "80%";
                 labelSize = "9px";
             }
-            
+
             let bars = years.map(year => {
                 const d = data[year];
                 const percentage = d.total > 0 ? Math.round((d.qualified / d.total) * 100) : 0;
@@ -2921,7 +3052,7 @@
         const tbody = document.createElement('tbody');
         flatResults.forEach(r => {
             const tr = document.createElement('tr');
-            if (r.wlonly) tr.style.backgroundColor = '#0d5c94';
+            if (r.wlonly && highlightWLON) tr.style.backgroundColor = '#0d5c94';
 
             // 1. Game Name
             const tdName = document.createElement('td');
@@ -3793,7 +3924,7 @@
             tr.appendChild(tdHours);
 
             // Highlight whitelist only giveaways
-            if (r.wlonly) tr.style.backgroundColor = '#0d5c94';
+            if (r.wlonly && highlightWLON) tr.style.backgroundColor = '#0d5c94';
 
             tbody.appendChild(tr);
         });
@@ -4182,5 +4313,3 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
-
-
