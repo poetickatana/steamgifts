@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.7.9
+// @version      1.8.0
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -79,7 +79,7 @@
     let dragOffsetY = 0;
 
     const DRAG_THRESHOLD = 5; // pixels
-    const PANEL_EXPANDED_WIDTH = 750;
+    const PANEL_EXPANDED_WIDTH = 800;
     const PANEL_COLLAPSED_PADDING = '0px';
 
     /************ UI ************/
@@ -457,7 +457,7 @@
             padding: 6px;
         }
         #sgCreatorFilter {
-            min-width: 180px;
+            min-width: 40px;
             padding: 2px 4px;
             display: none;
             vertical-align: middle;
@@ -2675,16 +2675,18 @@
                 const totalH = (d.total / maxYearWins) * 100;
                 const qualH = (d.qualified / d.total) * 100;
 
-                return `
-                    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; position: relative;" title="${year}: ${d.qualified}/${d.total}">
-                        <span style="font-size: 10px; margin-bottom: 4px; color: #66c0f4; font-weight: bold;">${percentage}%</span>
+            return `
+                <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; position: relative;" title="${year}: ${d.qualified}/${d.total}">
+                    <span style="font-size: 9px; margin-bottom: 4px; color: #66c0f4; font-weight: bold; white-space: nowrap;">
+                        ${percentage}<span style="font-size: 7px;">%</span>
+                    </span>
 
-                        <div style="width: 70%; height: ${totalH}px; background: #3d4450; display: flex; flex-direction: column-reverse; border-radius: 2px 2px 0 0;">
-                            <div style="width: 100%; height: ${qualH}%; background: #66c0f4; border-radius: 1px;"></div>
-                        </div>
+                    <div style="width: 80%; height: ${totalH}px; background: #3d4450; display: flex; flex-direction: column-reverse; border-radius: 2px 2px 0 0;">
+                        <div style="width: 100%; height: ${qualH}%; background: #66c0f4; border-radius: 1px;"></div>
+                    </div>
 
-                        <span style="font-size: 9px; margin-top: 6px; color: #8f98a0; font-weight: bold;">'${year.toString().slice(-2)}</span>
-                    </div>`;
+                    <span style="font-size: 9px; margin-top: 6px; color: #8f98a0; font-weight: bold;">'${year.toString().slice(-2)}</span>
+                </div>`;
             }).join('');
 
             return `
@@ -2697,7 +2699,7 @@
         statusEl.style.padding = "15px";
 
         statusEl.innerHTML = `
-            <div style="display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: space-between; align-items: stretch; gap: 40px; color: #d2d2d2;">
+            <div style="display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: space-between; align-items: stretch; gap: 20px; color: #d2d2d2;">
 
                 <div style="flex: 0 0 auto;">
                     <b style="font-size: 1.1em;">Detailed results for
@@ -2717,7 +2719,7 @@
                 </div>
 
                 <div style="flex: 1; min-width: 250px; display: flex; flex-direction: column; justify-content: flex-end;">
-                    <div style="text-align: center; font-size: 0.85em; font-weight: bold; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7;">
+                    <div style="text-align: center; font-size: 0.85em; font-weight: bold; margin-bottom: 30px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7;">
                         Play Rate Trend (≥25% Achievements)
                     </div>
                     ${renderChart(stats.yearlyData)}
