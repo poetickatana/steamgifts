@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.7.7
+// @version      1.7.8
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1927,23 +1927,34 @@
 
         let totalHours = 0;
         let anyHours = 0;
-        let avgHours = 0;
+
+        // Yearly data storage: { "2024": { total: 0, qualified: 0 }, ... }
+        const yearlyData = {};
 
         for (const w of wins) {
+            // 1. Process Playtime
             totalHours += w.hours ?? 0;
             if (w.hours) anyHours++;
 
+            // 2. Process Yearly Trend (Based on win date)
+            const winYear = new Date(w.ts * 1000).getFullYear();
+            if (!yearlyData[winYear]) yearlyData[winYear] = { total: 0, qualified: 0 };
+            yearlyData[winYear].total++;
+
+            // 3. Process Achievements
             if (!w.ach || !w.ach.includes('/')) continue;
 
             const [done, total] = w.ach.split('/').map(Number);
             if (!total || isNaN(done) || isNaN(total)) continue;
 
             eligible++;
-
             const pct = (done / total) * 100;
 
             if (pct > 0) gamesAnyCompletion++;
-            if (pct >= 25) games25Completion++;
+            if (pct >= 25) {
+                games25Completion++;
+                yearlyData[winYear].qualified++; // Track for the chart
+            }
             if (pct === 100) games100Completion++;
 
             if (done > 0) {
@@ -1955,37 +1966,46 @@
         return {
             gamesWon: wins.length,
             eligible,
-
             gamesAnyCompletion,
             games25Completion,
             games100Completion,
-
-            pctAnyCompletion: eligible
-                ? (Math.round((gamesAnyCompletion / eligible) * 1000) / 10)
-                : 0,
-
-            pct25Completion: eligible
-                ? (Math.round((games25Completion / eligible) * 1000) / 10)
-                : 0,
-
-            pct100Completion: eligible
-                ? (Math.round((games100Completion / eligible) * 1000) / 10)
-                : 0,
-
-            compPct: totalAvailable
-                ? (Math.round((totalUnlocked / totalAvailable) * 1000) / 10)
-                : 0,
-
+            pctAnyCompletion: eligible ? (Math.round((gamesAnyCompletion / eligible) * 1000) / 10) : 0,
+            pct25Completion: eligible ? (Math.round((games25Completion / eligible) * 1000) / 10) : 0,
+            pct100Completion: eligible ? (Math.round((games100Completion / eligible) * 1000) / 10) : 0,
+            compPct: totalAvailable ? (Math.round((totalUnlocked / totalAvailable) * 1000) / 10) : 0,
             totalHours: totalHours / 60,
-
             anyHours: anyHours,
-
             pctAnyHours: (Math.round((anyHours / wins.length) * 1000) / 10),
-
-            avgHours: anyHours
-                ? Math.round((totalHours / 60) / anyHours * 10) / 10
-                : 0
+            avgHours: anyHours ? Math.round((totalHours / 60) / anyHours * 10) / 10 : 0,
+            yearlyData // Added for chart rendering
         };
+    }
+
+    function renderYearlyHistogram(yearlyData) {
+        const years = Object.keys(yearlyData).sort();
+        if (years.length === 0) return '';
+
+        const maxWins = Math.max(...years.map(y => yearlyData[y].total));
+
+        let chartHtml = `
+            <div style="display: flex; align-items: flex-end; height: 120px; gap: 4px; padding-top: 20px; border-bottom: 1px solid #3d4450; font-family: Arial, sans-serif;">`;
+
+        years.forEach(year => {
+            const d = yearlyData[year];
+            const totalHeight = (d.total / maxWins) * 100;
+            const qualifiedHeight = (d.qualified / d.total) * 100;
+
+            chartHtml += `
+                <div style="flex: 1; display: flex; flex-direction: column; align-items: center; position: relative;" title="${year}: ${d.qualified}/${d.total} (≥25%)">
+                    <div style="width: 100%; height: ${totalHeight}px; background: #3d4450; position: relative; display: flex; flex-direction: column-reverse;">
+                        <div style="width: 100%; height: ${qualifiedHeight}%; background: #66c0f4;"></div>
+                    </div>
+                    <span style="font-size: 10px; margin-top: 5px; transform: rotate(-45deg); white-space: nowrap; opacity: 0.8;">${year}</span>
+                </div>`;
+        });
+
+        chartHtml += `</div>`;
+        return chartHtml;
     }
 
     async function exportTableToCSV(table, suggestedName) {
@@ -2625,12 +2645,9 @@
     }
 
     function showUserDetail(username, fullScan = false) {
-        // Remove any visible table first
+        // UI Cleanup
         resultsWrap.querySelector('table')?.remove();
-        resultsWrap.querySelector('#dismiss-table')?.remove();
-        resultsWrap.querySelector('#write-csv')?.remove();
-        resultsWrap.querySelector('#flat-view')?.remove();
-        resultsWrap.querySelector('#back-to-summary')?.remove();
+        ['#dismiss-table', '#write-csv', '#flat-view', '#back-to-summary'].forEach(id => resultsWrap.querySelector(id)?.remove());
 
         scanState.activeUser = username;
         const wins = scanState.userMap[username];
@@ -2638,49 +2655,85 @@
 
         const stats = computeUserStats(wins);
 
-        const formatStatRow = (label, value, suffix = '', detail = '') => {
+        const formatStatRow = (label, value, suffix = '', detail = '') => `
+            <div style="line-height: 1.8; font-family: 'Segoe UI', sans-serif; display: flex; align-items: center; white-space: nowrap;">
+                <span style="width: 230px; opacity: 0.9;">${label}</span>
+                <span style="width: 60px; text-align: right; font-weight: bold; color: #fff;">${value}${suffix}</span>
+                <span style="margin-left: 12px; opacity: 0.5; font-size: 0.85em; min-width: 60px;">${detail}</span>
+            </div>`;
+
+        const renderChart = (data) => {
+            const years = Object.keys(data).sort();
+            if (!years.length) return '<div style="opacity:0.5; text-align:center; padding-top:40px;">No trend data</div>';
+
+            const maxYearWins = Math.max(...years.map(y => data[y].total));
+
+            let bars = years.map(year => {
+                const d = data[year];
+                const percentage = d.total > 0 ? Math.round((d.qualified / d.total) * 100) : 0;
+                const totalH = (d.total / maxYearWins) * 100;
+                const qualH = (d.qualified / d.total) * 100;
+
+                return `
+                    <div style="flex: 1; display: flex; flex-direction: column; align-items: center; position: relative;" title="${year}: ${d.qualified}/${d.total}">
+                        <span style="font-size: 10px; margin-bottom: 4px; color: #66c0f4; font-weight: bold;">${percentage}%</span>
+
+                        <div style="width: 70%; height: ${totalH}px; background: #3d4450; display: flex; flex-direction: column-reverse; border-radius: 2px 2px 0 0;">
+                            <div style="width: 100%; height: ${qualH}%; background: #66c0f4; border-radius: 1px;"></div>
+                        </div>
+
+                        <span style="font-size: 9px; margin-top: 6px; color: #8f98a0; font-weight: bold;">'${year.toString().slice(-2)}</span>
+                    </div>`;
+            }).join('');
+
             return `
-                <div style="line-height: 1.6; font-family: 'Segoe UI', Tahoma, sans-serif;">
-                    <span style="display: inline-block; width: 250px; font-weight: bold;">${label}</span>
-                    <span style="display: inline-block; width: 50px; text-align: right; font-weight: bold;">${value}${suffix}</span>
-                    <span style="margin-left: 10px; opacity: 0.7; font-size: 0.9em;">${detail}</span>
+                <div style="display: flex; align-items: flex-end; height: 115px; gap: 4px; padding-bottom: 5px; border-bottom: 1px solid #3d4450;">
+                    ${bars}
                 </div>`;
         };
 
-        let html = '';
-        html += formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion.toFixed(1), '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`);
-        html += formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion.toFixed(1), '%', `(${stats.games25Completion}/${stats.eligible})`);
-        html += formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion.toFixed(1), '%', `(${stats.games100Completion}/${stats.eligible})`);
-        html += formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct.toFixed(1), '%');
-        html += formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`);
-        html += formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h');
+        const statusEl = document.getElementById('sgStatus');
+        statusEl.style.padding = "15px";
 
-        document.getElementById('sgStatus').innerHTML = `
-            <b>Showing detailed results for
-            <a href="https://www.steamgifts.com/user/${scanState.userDisplay[username] ?? username}"
-               target="_blank"
-               style="color:#66c0f4;text-decoration:underline;">
-                ${scanState.userDisplay[username] ?? username}
-            </a></b><br>
+        statusEl.innerHTML = `
+            <div style="display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: space-between; align-items: stretch; gap: 40px; color: #d2d2d2;">
 
-             ${html}
+                <div style="flex: 0 0 auto;">
+                    <b style="font-size: 1.1em;">Detailed results for
+                        <a href="https://www.steamgifts.com/user/${scanState.userDisplay[username] ?? username}" target="_blank" style="color:#66c0f4;">
+                            ${scanState.userDisplay[username] ?? username}
+                        </a>
+                    </b>
+                    <div style="margin-top: 10px; border-top: 1px solid #3d4450; padding-top: 10px;">
+                        ${formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion.toFixed(1), '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`)}
+                        ${formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion.toFixed(1), '%', `(${stats.games25Completion}/${stats.eligible})`)}
+                        ${formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion.toFixed(1), '%', `(${stats.games100Completion}/${stats.eligible})`)}
+                        ${formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct.toFixed(1), '%')}
+                        ${formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`)}
+                        ${formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h')}
+                    </div>
+                    ${scanState.userPrivate[username] ? '<div style="margin-top:10px; color:#ff4c4c;">🔒 Steam profile is private</div>' : ''}
+                </div>
+
+                <div style="flex: 1; min-width: 250px; display: flex; flex-direction: column; justify-content: flex-end;">
+                    <div style="text-align: center; font-size: 0.85em; font-weight: bold; margin-bottom: 20px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7;">
+                        Play Rate Trend (≥25% Achievements)
+                    </div>
+                    ${renderChart(stats.yearlyData)}
+                    <div style="display: flex; justify-content: space-between; margin-top: 12px; font-size: 0.8em; opacity: 0.6;">
+                        <span><i style="display:inline-block; width:10px; height:10px; background:#3d4450; margin-right:4px;"></i>Total Wins</span>
+                        <span><i style="display:inline-block; width:10px; height:10px; background:#66c0f4; margin-right:4px;"></i>Played (≥25%)</span>
+                    </div>
+                </div>
+            </div>
         `;
-
-         if (scanState.userPrivate[username]) {
-             document.getElementById('sgStatus').innerHTML +=
-                 `<br>🔒 <b>Steam profile is private</b>`;
-         }
 
         if (fullScan && !scanState.userPrivate[username]) {
             saveUserStatsToCache(username, stats);
             refreshAnnotations();
         }
-
         render(wins);
-
-        if (scanState.mode === 'all' || scanState.mode === 'group') {
-            addBackToSummaryButton();
-        }
+        if (['all', 'group'].includes(scanState.mode)) addBackToSummaryButton();
     }
 
     function addBackToSummaryButton() {
