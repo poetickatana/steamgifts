@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.8.0
+// @version      1.8.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -2668,7 +2668,8 @@
             if (!years.length) return '<div style="opacity:0.5; text-align:center; padding-top:40px;">No trend data</div>';
 
             const maxYearWins = Math.max(...years.map(y => data[y].total));
-
+            const barWidth = years.length > 8 ? "80%" : "70%";
+            
             let bars = years.map(year => {
                 const d = data[year];
                 const percentage = d.total > 0 ? Math.round((d.qualified / d.total) * 100) : 0;
@@ -2681,7 +2682,7 @@
                         ${percentage}<span style="font-size: 7px;">%</span>
                     </span>
 
-                    <div style="width: 80%; height: ${totalH}px; background: #3d4450; display: flex; flex-direction: column-reverse; border-radius: 2px 2px 0 0;">
+                    <div style="width: ${barWidth}; height: ${totalH}px; background: #3d4450; display: flex; flex-direction: column-reverse; border-radius: 2px 2px 0 0;">
                         <div style="width: 100%; height: ${qualH}%; background: #66c0f4; border-radius: 1px;"></div>
                     </div>
 
@@ -4175,3 +4176,4 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
+
