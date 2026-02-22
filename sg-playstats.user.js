@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.8.1
+// @version      1.8.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -2668,7 +2668,13 @@
             if (!years.length) return '<div style="opacity:0.5; text-align:center; padding-top:40px;">No trend data</div>';
 
             const maxYearWins = Math.max(...years.map(y => data[y].total));
-            const barWidth = years.length > 8 ? "80%" : "70%";
+            let barWidth = "70%";
+            let labelSize = "10px";
+
+            if (years.length > 8) {
+                barWidth = "80%";
+                labelSize = "9px";
+            }
             
             let bars = years.map(year => {
                 const d = data[year];
@@ -2678,7 +2684,7 @@
 
             return `
                 <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; position: relative;" title="${year}: ${d.qualified}/${d.total}">
-                    <span style="font-size: 9px; margin-bottom: 4px; color: #66c0f4; font-weight: bold; white-space: nowrap;">
+                    <span style="font-size: ${labelSize}; margin-bottom: 4px; color: #66c0f4; font-weight: bold; white-space: nowrap;">
                         ${percentage}<span style="font-size: 7px;">%</span>
                     </span>
 
@@ -2686,7 +2692,7 @@
                         <div style="width: 100%; height: ${qualH}%; background: #66c0f4; border-radius: 1px;"></div>
                     </div>
 
-                    <span style="font-size: 9px; margin-top: 6px; color: #8f98a0; font-weight: bold;">'${year.toString().slice(-2)}</span>
+                    <span style="font-size: ${labelSize}; margin-top: 6px; color: #8f98a0; font-weight: bold;">'${year.toString().slice(-2)}</span>
                 </div>`;
             }).join('');
 
@@ -4176,4 +4182,5 @@
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
 })();
+
 
