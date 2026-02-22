@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.7.8
+// @version      1.7.9
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1936,18 +1936,19 @@
             totalHours += w.hours ?? 0;
             if (w.hours) anyHours++;
 
-            // 2. Process Yearly Trend (Based on win date)
-            const winYear = new Date(w.ts * 1000).getFullYear();
-            if (!yearlyData[winYear]) yearlyData[winYear] = { total: 0, qualified: 0 };
-            yearlyData[winYear].total++;
-
-            // 3. Process Achievements
+            // 2. Process Achievements
             if (!w.ach || !w.ach.includes('/')) continue;
 
             const [done, total] = w.ach.split('/').map(Number);
             if (!total || isNaN(done) || isNaN(total)) continue;
 
             eligible++;
+
+            // 3. Process Yearly Trend (Based on win date)
+            const winYear = new Date(w.ts * 1000).getFullYear();
+            if (!yearlyData[winYear]) yearlyData[winYear] = { total: 0, qualified: 0 };
+            yearlyData[winYear].total++;
+
             const pct = (done / total) * 100;
 
             if (pct > 0) gamesAnyCompletion++;
