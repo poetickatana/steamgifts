@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.7.6
+// @version      1.7.7
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -2638,10 +2638,6 @@
 
         const stats = computeUserStats(wins);
 
-        if (fullScan) {
-            saveUserStatsToCache(username, stats);
-            refreshAnnotations();
-        }
         const formatStatRow = (label, value, suffix = '', detail = '') => {
             return `
                 <div style="line-height: 1.6; font-family: 'Segoe UI', Tahoma, sans-serif;">
@@ -2674,6 +2670,11 @@
              document.getElementById('sgStatus').innerHTML +=
                  `<br>🔒 <b>Steam profile is private</b>`;
          }
+
+        if (fullScan && !scanState.userPrivate[username]) {
+            saveUserStatsToCache(username, stats);
+            refreshAnnotations();
+        }
 
         render(wins);
 
