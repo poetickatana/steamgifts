@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.8.3
+// @version      1.9.0
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -69,6 +69,7 @@
     let dateFormatMDY = true; // default to MM-DD-YYYY
     let annotateON = true; // default to ON
     let highlightWLON = false; // default to OFF
+    let playrateStartedON = false;
     let ignoreDlcON = false; // default to OFF
 
     let isDragging = false;
@@ -91,7 +92,6 @@
             background-size: 100% 100%;
         }
         .sg-user-table .col-game {
-            max-width: 400px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -401,6 +401,105 @@
             opacity: 1;
         }
 
+        .playratestarted-toggle-wrapper {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #c7d5e0;
+            white-space: nowrap;
+        }
+
+        .playratestarted-toggle-label  {
+            font-weight:bold;
+            font-size:13px;
+            color:#c7d5e0;
+        }
+
+        .playratestarted-toggle-switch {
+            position: relative;
+            display: inline-block;
+            /* Reduced size */
+            width: 44px;
+            height: 18px;
+        }
+
+        .playratestarted-toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #555;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .playratestarted-toggle-slider::before {
+            content: "";
+            position: absolute;
+            /* Knob is 4px smaller than the container height to create a 2px margin */
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background-color: #fff; /* White knob often looks better on small switches */
+            border-radius: 50%;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+
+        .playratestarted-toggle-switch input:checked + .playratestarted-toggle-slider::before {
+            /* (Width - Knob Width - Margins) = (44 - 14 - 4) = 26px */
+            transform: translateX(26px);
+        }
+
+        .playratestarted-toggle-switch input:checked + .playratestarted-toggle-slider {
+            background: #66c0f4;
+        }
+
+        .playratestarted-toggle-text {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: 700;
+            font-size: 8px;
+            color: #fff;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            white-space: nowrap; /* Prevents text from wrapping */
+        }
+
+        .playratestarted-toggle-switch input:not(:checked) + .playratestarted-toggle-slider .playratestarted-off {
+            opacity: 0; /* Using opacity: 0 for a cleaner look on small sizes */
+        }
+
+        .playratestarted-toggle-switch input:checked + .playratestarted-toggle-slider .playratestarted-on {
+            opacity: 0;
+        }
+
+        .playratestarted-off {
+            right: 6px;
+            opacity: 1;
+        }
+        .playratestarted-on {
+            left: 6px;
+            opacity: 0;
+        }
+
+        /* --- Toggle Logic --- */
+        .playratestarted-toggle-switch input:not(:checked) + .playratestarted-toggle-slider .playratestarted-off {
+            opacity: 1;
+        }
+        .playratestarted-toggle-switch input:not(:checked) + .playratestarted-toggle-slider .playratestarted-on {
+            opacity: 0;
+        }
+        .playratestarted-toggle-switch input:checked + .playratestarted-toggle-slider .playratestarted-off {
+            opacity: 0;
+        }
+        .playratestarted-toggle-switch input:checked + .playratestarted-toggle-slider .playratestarted-on {
+            opacity: 1;
+        }
+
         .ignoredlc-toggle-wrapper {
             display: flex;
             align-items: center;
@@ -691,12 +790,7 @@
        .sg-collapsible-content button:hover {
            background: #223a50;
        }
-       #sg-summary-table thead th {
-           position: sticky;
-           top: 0;
-           z-index: 2;
-           background: #2a475e;
-       }
+
        #sg-user-table thead th {
            position: sticky;
            top: 0;
@@ -774,8 +868,53 @@
            color: #c7d5e0;
            border-radius: 3px;
        }
-}
+       #sg-summary-table {
+            width: 100%;
+            margin-top: 10px;
+            border-collapse: separate;
+            border-spacing: 0;
+            table-layout: fixed;
+            background: #1b2838;
+            color: #d2d2d2;
+        }
+        /* Default cell behavior: center aligned with right/bottom borders */
+        #sg-summary-table th, #sg-summary-table td {
+            padding: 8px 4px;
+            border-right: 1px solid #444;
+            border-bottom: 1px solid #444;
+            text-align: center;
+            vertical-align: middle;
+            white-space: nowrap;
+        }
+        /* First column (Usernames) should be left-aligned and have a left border */
+        #sg-summary-table th:first-child,
+        #sg-summary-table td:first-child {
+            text-align: left;
+            border-left: 1px solid #444;
+            padding-left: 10px;
+        }
+        /* Sticky Average Row */
+        .sticky-avg {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #1b2838 !important;
+            font-weight: bold;
+            color: #66c0f4;
+        }
+        /* Add the top border only to the first sticky row */
+        .sticky-avg td { border-top: 1px solid #444; }
 
+        /* Sticky Header Row */
+        .sticky-header th {
+            position: sticky;
+            background: #2a475e !important;
+            color: #fff;
+            z-index: 9;
+            cursor: pointer;
+        }
+        /* Small text formatting */
+        #sg-summary-table small { opacity: 0.7; font-size: 0.85em; }
     `;
     document.head.appendChild(style);
 
@@ -893,7 +1032,7 @@
         </label>
     </div>
     <div class="annotate-toggle-wrapper" id="sgAnnotateToggleRow">
-        <span class="annotate-toggle-label">Annotate Results</span>
+        <span class="annotate-toggle-label">Annotate Results on User Profiles</span>
         <label class="annotate-toggle-switch">
             <input type="checkbox" id="sgAnnotateToggle">
             <span class="annotate-toggle-slider">
@@ -903,12 +1042,22 @@
         </label>
     </div>
     <div class="highlightwl-toggle-wrapper" id="sgHighlightWLToggleRow">
-        <span class="highlightwl-toggle-label">Highlight Whitelist Only</span>
+        <span class="highlightwl-toggle-label">Highlight Whitelist-Only Giveaways</span>
         <label class="highlightwl-toggle-switch">
             <input type="checkbox" id="sgHighlightWLToggle">
             <span class="highlightwl-toggle-slider">
                 <span class="highlightwl-toggle-text highlightwl-off">OFF</span>
                 <span class="highlightwl-toggle-text highlightwl-on">ON</span>
+            </span>
+        </label>
+    </div>
+    <div class="playratestarted-toggle-wrapper" id="sgPlayrateStartedToggleRow">
+        <span class="playratestarted-toggle-label">Display Started Games in Play Rate Chart</span>
+        <label class="playratestarted-toggle-switch">
+            <input type="checkbox" id="sgPlayrateStartedToggle">
+            <span class="playratestarted-toggle-slider">
+                <span class="playratestarted-toggle-text playratestarted-off">OFF</span>
+                <span class="playratestarted-toggle-text playratestarted-on">ON</span>
             </span>
         </label>
     </div>
@@ -1069,6 +1218,11 @@
     const highlightWLToggleRow = document.getElementById('sgHighlightWLToggleRow');
     if (highlightWLToggleRow) {
         settingsPanel.appendChild(highlightWLToggleRow);
+    }
+
+    const playrateStartedToggleRow = document.getElementById('sgPlayrateStartedToggleRow');
+    if (playrateStartedToggleRow) {
+        settingsPanel.appendChild(playrateStartedToggleRow);
     }
 
     const ignoreDlcToggleRow = document.getElementById('sgIgnoreDlcToggleRow');
@@ -1306,7 +1460,7 @@
 
     settingsPanel.appendChild(
         makeSettingInput(
-            'Cache Expiry (days)',
+            'Steam Cache Expiry (days)',
             'steamCacheTTLDays',
             'Number of days Steam data stays in your local cache before it is considered "stale" and needs a fresh download.',
             1, 90
@@ -1335,7 +1489,7 @@
 
     debugSection.content.appendChild(
         makeSettingsButton(
-            'Show Cache Disk Usage',
+            'Show Cache Disk Usage (Console)',
             'Show Playstats cache storage usage in console',
             () => debugShowCacheStorageFootprint()
         )
@@ -1343,7 +1497,7 @@
 
     debugSection.content.appendChild(
         makeSettingsButton(
-            'Show Giveaway Cache Contents',
+            'Show Giveaway Cache Contents (Console)',
             'Log giveaway cache contents to console',
             () => debugShowGiveawayCache()
         )
@@ -1353,11 +1507,11 @@
     separator2.style = "height: 1px; background: #3b5871; margin: 10px 0; opacity: 0.5;";
     debugSection.content.appendChild(separator2)
 
-    debugSection.content.appendChild(makeDebugSubHeader('Clear Caches'));
+    debugSection.content.appendChild(makeDebugSubHeader('Cache Management'));
 
     debugSection.content.appendChild(
         makeSettingsButton(
-            'Giveaway Cache [Current Page]',
+            'Clear Giveaway Cache for Current Page',
             'Clear giveaway cache for current page',
             () => {
                 if (!confirm('Clear giveaway cache for this page?')) return;
@@ -1369,7 +1523,7 @@
 
     debugSection.content.appendChild(
         makeSettingsButton(
-            'Giveaway Cache [All Pages]',
+            'Clear ALL Giveaway Caches',
             'Clear ALL giveaway caches',
             () => {
                 if (!confirm('Clear ALL giveaway caches? This cannot be undone.')) return;
@@ -1381,7 +1535,7 @@
 
     debugSection.content.appendChild(
         makeSettingsButton(
-            'Steam Cache',
+            'Clear Steam Cache',
             'Clear ALL Steam playtime and achievement data',
             () => {
                 if (!confirm('Clear ALL Steam cache data? This cannot be undone.')) return;
@@ -1393,7 +1547,7 @@
 
     debugSection.content.appendChild(
         makeSettingsButton(
-            'Subid Mapping Cache',
+            'Clear Subid Mapping Cache',
             'Clear the subid -> app mapping cache. Only necessary if subid contents change.',
             () => {
                 if (!confirm('Clear subid cache?')) return;
@@ -1405,7 +1559,7 @@
 
     debugSection.content.appendChild(
         makeSettingsButton(
-            ' SteamID Cache',
+            'Clear SteamID Cache',
             'Clear the cache holding user steamid values.',
             () => {
                 if (!confirm('Clear steamid cache?')) return;
@@ -1420,7 +1574,7 @@
     debugSection.content.appendChild(separator3)
 
     const debugCacheBtn = document.createElement('button');
-    debugCacheBtn.textContent = '🧪 View Cached DLCs';
+    debugCacheBtn.textContent = '🧪 View Cached DLCs (Console)';
     debugCacheBtn.className = 'sg-secondary-btn';
 
     debugCacheBtn.onclick = () => {
@@ -1499,6 +1653,22 @@
 
         // Save to localStorage
         localStorage.setItem('playstats_highlightwl', JSON.stringify(highlightWLON));
+    });
+
+    const playrateStartedToggle = document.getElementById('sgPlayrateStartedToggle');
+
+    // Load saved state from localStorage (default to true if not set)
+    const savedPlayrateStarted = localStorage.getItem('playstats_playratestarted');
+    playrateStartedToggle.checked = savedPlayrateStarted !== null ? JSON.parse(savedPlayrateStarted) : playrateStartedON;
+
+    // Set the variable to match saved state
+    playrateStartedON = playrateStartedToggle.checked;
+
+    playrateStartedToggle.addEventListener('change', async () => {
+        playrateStartedON = playrateStartedToggle.checked;
+
+        // Save to localStorage
+        localStorage.setItem('playstats_playratestarted', JSON.stringify(playrateStartedON));
     });
 
     const ignoreDlcToggle = document.getElementById('sgIgnoreDlcToggle');
@@ -2077,12 +2247,15 @@
 
             // 3. Process Yearly Trend (Based on win date)
             const winYear = new Date(w.ts * 1000).getFullYear();
-            if (!yearlyData[winYear]) yearlyData[winYear] = { total: 0, qualified: 0 };
+            if (!yearlyData[winYear]) yearlyData[winYear] = { total: 0, qualified: 0, any_completion: 0};
             yearlyData[winYear].total++;
 
             const pct = (done / total) * 100;
 
-            if (pct > 0) gamesAnyCompletion++;
+            if (pct > 0) {
+                gamesAnyCompletion++;
+                yearlyData[winYear].any_completion++; // Track for the chart
+            }
             if (pct >= 25) {
                 games25Completion++;
                 yearlyData[winYear].qualified++; // Track for the chart
@@ -2109,6 +2282,8 @@
             anyHours: anyHours,
             pctAnyHours: (Math.round((anyHours / wins.length) * 1000) / 10),
             avgHours: anyHours ? Math.round((totalHours / 60) / anyHours * 10) / 10 : 0,
+            totalUnlocked,
+            totalAvailable,
             yearlyData // Added for chart rendering
         };
     }
@@ -2149,6 +2324,7 @@
                     .replace(/\s+/g, ' ')
                     .trim()
                     .replace(/🔒/g, '')
+                    .replace(/💙/g, '')
                     .replace(/"/g, '""');
                 return `"${text}"`;
             }).join(',');
@@ -2690,7 +2866,19 @@
             const rows = doc.querySelectorAll('.giveaway__row-inner-wrap');
 
             for (const g of rows) {
-                const name = g.querySelector('.giveaway__heading__name')?.textContent.trim();
+                //const name = g.querySelector('.giveaway__heading__name')?.textContent.trim();
+                // 1. Find the search icon link which contains the full title
+                const searchLink = g.querySelector('a.giveaway__icon[href^="/game/"]');
+                const fullTitle = searchLink?.getAttribute('title') || "";
+
+                // 2. Extract the name after the prefix, or fallback to the standard name link text
+                let name;
+                if (fullTitle.includes("Free Steam Giveaways and Keys for ")) {
+                    name = fullTitle.split("Free Steam Giveaways and Keys for ").pop().trim();
+                } else {
+                    name = g.querySelector('.giveaway__heading__name')?.textContent.trim();
+                }
+
                 const url  = g.querySelector('.giveaway__heading__name')?.href || null;
 
                 const appLink = g.querySelector('a[href*="/app/"], a[href*="/sub/"]')?.href;
@@ -2786,13 +2974,18 @@
         if (!wins) return;
 
         const stats = computeUserStats(wins);
+        const hasAchData = stats.eligible > 0;
 
-        const formatStatRow = (label, value, suffix = '', detail = '') => `
-            <div style="line-height: 1.8; font-family: 'Segoe UI', sans-serif; display: flex; align-items: center; white-space: nowrap;">
-                <span style="width: 230px; opacity: 0.9;">${label}</span>
-                <span style="width: 60px; text-align: right; font-weight: bold; color: #fff;">${value}${suffix}</span>
-                <span style="margin-left: 12px; opacity: 0.5; font-size: 0.85em; min-width: 60px;">${detail}</span>
-            </div>`;
+        const formatStatRow = (label, value, suffix = '', detail = '', forceNumeric = false) => {
+            const displayValue = (forceNumeric || hasAchData) ? `${value}${suffix}` : 'N/A';
+
+            return `
+                <div style="line-height: 1.8; font-family: 'Segoe UI', sans-serif; display: flex; align-items: center; white-space: nowrap;">
+                    <span style="width: 230px; opacity: 0.9;">${label}</span>
+                    <span style="width: 60px; text-align: right; font-weight: bold; color: #fff;">${displayValue}</span>
+                    <span style="margin-left: 12px; opacity: 0.5; font-size: 0.85em; min-width: 60px;">${detail}</span>
+                </div>`;
+        };
 
         const renderChart = (data) => {
             const years = Object.keys(data).sort();
@@ -2809,27 +3002,41 @@
 
             let bars = years.map(year => {
                 const d = data[year];
-                const percentage = d.total > 0 ? Math.round((d.qualified / d.total) * 100) : 0;
+                const pct25 = d.total > 0 ? Math.round((d.qualified / d.total) * 100) : 0;
                 const totalH = (d.total / maxYearWins) * 100;
-                const qualH = (d.qualified / d.total) * 100;
 
-            return `
-                <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; position: relative;" title="${year}: ${d.qualified}/${d.total}">
-                    <span style="font-size: ${labelSize}; margin-bottom: 4px; color: #66c0f4; font-weight: bold; white-space: nowrap;">
-                        ${percentage}<span style="font-size: 7px;">%</span>
-                    </span>
+                // Use conditional logic for the bar stacking
+                const anyH = playrateStartedON ? (d.any_completion / d.total) * 100 : 0;
 
-                    <div style="width: ${barWidth}; height: ${totalH}px; background: #3d4450; display: flex; flex-direction: column-reverse; border-radius: 2px 2px 0 0;">
-                        <div style="width: 100%; height: ${qualH}%; background: #66c0f4; border-radius: 1px;"></div>
-                    </div>
+                // If started is ON, blue is relative to yellow. If OFF, blue is relative to total.
+                const qualH = playrateStartedON
+                    ? (d.any_completion > 0 ? (d.qualified / d.any_completion) * 100 : 0)
+                    : (d.total > 0 ? (d.qualified / d.total) * 100 : 0);
 
-                    <span style="font-size: ${labelSize}; margin-top: 6px; color: #8f98a0; font-weight: bold;">'${year.toString().slice(-2)}</span>
-                </div>`;
+                return `
+                    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; position: relative;" title="${year}: Total: ${d.total}${playrateStartedON ? `, >0%: ${d.any_completion}` : ''}, ≥25%: ${d.qualified}">
+                        <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 4px; line-height: 1;">
+                            <span style="font-size: ${labelSize}; color: #66c0f4; font-weight: bold;">${pct25}%</span>
+                        </div>
+
+                        <div style="width: ${barWidth}; height: ${totalH}px; background: #3d4450; display: flex; flex-direction: column-reverse; border-radius: 2px 2px 0 0; overflow: hidden;">
+                            <div style="width: 100%; height: ${playrateStartedON ? anyH : 100}%; ${playrateStartedON ? 'background: #f0ad4e;' : ''} display: flex; flex-direction: column-reverse;">
+                                <div style="width: 100%; height: ${qualH}%; background: #66c0f4;"></div>
+                            </div>
+                        </div>
+
+                        <span style="font-size: ${labelSize}; margin-top: 6px; color: #8f98a0; font-weight: bold;">'${year.toString().slice(-2)}</span>
+                    </div>`;
             }).join('');
 
             return `
                 <div style="display: flex; align-items: flex-end; height: 115px; gap: 4px; padding-bottom: 5px; border-bottom: 1px solid #3d4450;">
                     ${bars}
+                </div>
+                <div style="display: flex; justify-content: space-between; margin-top: 12px; font-size: 0.75em; opacity: 0.7; flex-wrap: wrap; gap: 8px;">
+                    <span><i style="display:inline-block; width:8px; height:8px; background:#3d4450; margin-right:4px; border-radius:1px;"></i>Total Wins</span>
+                    ${playrateStartedON ? `<span><i style="display:inline-block; width:8px; height:8px; background:#f0ad4e; margin-right:4px; border-radius:1px;"></i>Started (>0%)</span>` : ''}
+                    <span><i style="display:inline-block; width:8px; height:8px; background:#66c0f4; margin-right:4px; border-radius:1px;"></i>Played (≥25%)</span>
                 </div>`;
         };
 
@@ -2850,21 +3057,17 @@
                         ${formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion.toFixed(1), '%', `(${stats.games25Completion}/${stats.eligible})`)}
                         ${formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion.toFixed(1), '%', `(${stats.games100Completion}/${stats.eligible})`)}
                         ${formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct.toFixed(1), '%')}
-                        ${formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`)}
-                        ${formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h')}
+                        ${formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`, true)}
+                        ${formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h', '', true)}
                     </div>
                     ${scanState.userPrivate[username] ? '<div style="margin-top:10px; color:#ff4c4c;">🔒 Steam profile is private</div>' : ''}
                 </div>
 
                 <div style="flex: 1; min-width: 250px; display: flex; flex-direction: column; justify-content: flex-end;">
                     <div style="text-align: center; font-size: 0.85em; font-weight: bold; margin-bottom: 30px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7;">
-                        Play Rate Trend (≥25% Achievements)
+                        Play Rate Trend
                     </div>
                     ${renderChart(stats.yearlyData)}
-                    <div style="display: flex; justify-content: space-between; margin-top: 12px; font-size: 0.8em; opacity: 0.6;">
-                        <span><i style="display:inline-block; width:10px; height:10px; background:#3d4450; margin-right:4px;"></i>Total Wins</span>
-                        <span><i style="display:inline-block; width:10px; height:10px; background:#66c0f4; margin-right:4px;"></i>Played (≥25%)</span>
-                    </div>
                 </div>
             </div>
         `;
@@ -3052,7 +3255,7 @@
         const tbody = document.createElement('tbody');
         flatResults.forEach(r => {
             const tr = document.createElement('tr');
-            if (r.wlonly && highlightWLON) tr.style.backgroundColor = '#0d5c94';
+            //if (r.wlonly && highlightWLON) tr.style.backgroundColor = '#0d5c94';
 
             // 1. Game Name
             const tdName = document.createElement('td');
@@ -3060,7 +3263,9 @@
             if (r.url) {
                 const a = document.createElement('a');
                 a.href = r.url; a.target = '_blank'; a.style = 'color:#66c0f4; text-decoration:none;';
-                a.innerText = r.name; tdName.appendChild(a);
+                a.innerText = r.name;
+                if (r.wlonly && highlightWLON) a.innerText = r.name + ' 💙';
+                tdName.appendChild(a);
             } else {
                 tdName.innerText = r.name + ' 🔒'; tdName.style.color = '#888';
             }
@@ -3198,15 +3403,44 @@
             };
         resultsWrap.appendChild(flatViewBtn);
 
+        // 1. CALCULATE GLOBAL TOTALS
+        const totals = {
+            wins: 0,
+            eligible: 0,
+            any: 0,
+            twentyFive: 0,
+            hundred: 0,
+            hours: 0,
+            anyHoursWins: 0,  // For Option 2 (Wins with >0h)
+            usersWithPlaytime: 0, // For Option 1 (Users with >0h)
+            unlocked: 0, // for weighted Avg %
+            available: 0 // for weighted Avg %
+        };
+
+        summary.forEach(u => {
+            totals.wins += u.gamesWon || 0;
+            totals.eligible += u.eligible || 0;
+            totals.any += u.gamesAnyCompletion || 0;
+            totals.twentyFive += u.games25Completion || 0;
+            totals.hundred += u.games100Completion || 0;
+            totals.hours += u.totalHours || 0;
+            totals.anyHoursWins += u.anyHours || 0; // Number of games this user played
+            if (u.totalHours > 0) totals.usersWithPlaytime++;
+            totals.unlocked += (u.totalUnlocked || 0);
+            totals.available += (u.totalAvailable || 0);
+        });
+
+        const userCount = summary.length || 1;
+        const avg = {
+            pctAny: totals.eligible ? (Math.round((totals.any / totals.eligible) * 1000) / 10) : 0,
+            pct25: totals.eligible ? (Math.round((totals.twentyFive / totals.eligible) * 1000) / 10) : 0,
+            pct100: totals.eligible ? (Math.round((totals.hundred / totals.eligible) * 1000) / 10) : 0,
+            pctComp: totals.available ? (Math.round((totals.unlocked / totals.available) * 1000) / 10) : 0,
+            //perTotalWin: totals.wins ? (totals.hours / totals.wins) : 0, // Total Hours / All Wins
+            perPlayedWin: totals.anyHoursWins ? (totals.hours / totals.anyHoursWins) : 0 // Total Hours / Wins with >0h
+        };
+
         const table = document.createElement('table');
-        table.style = `
-            width: 100%;
-            margin-top: 10px;
-            border-collapse: collapse;
-            table-layout: fixed;
-            text-align: center;
-            white-space: nowrap;
-        `;
         table.id = 'sg-summary-table';
 
         const colgroup = document.createElement('colgroup');
@@ -3221,25 +3455,35 @@
             `;
             table.appendChild(colgroup);
 
-            const headers = ['User', 'Wins', '% Started<br>(>0🏆)', '% Pushed<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
+            const headers = ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
             const thead = document.createElement('thead');
+
+            // --- New Average Row ---
+            const trAvg = document.createElement('tr');
+            trAvg.className = 'sticky-avg';
+            trAvg.innerHTML = `
+                <td>GLOBAL SUMMARY</td>
+                <td>${totals.wins}</td>
+                <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
+                <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
+                <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
+                <td>${avg.pctComp}%</td>
+                <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
+            `;
+            thead.appendChild(trAvg);
+
+            const avgHeight = trAvg.offsetHeight || 30; // Fallback to 30 if not yet rendered
+
             const trHead = document.createElement('tr');
+            trHead.className = 'sticky-header';
             headers.forEach((h, i) => {
                 const th = document.createElement('th');
-                th.innerHTML = h; // Use innerHTML to render the 🏆 emoji properly
-                th.style = `
-                    cursor: pointer;
-                    padding: 8px 4px;      /* Slightly more vertical padding */
-                    background: #2a475e;
-                    color: #fff;
-                    border: 1px solid #444;
-                    white-space: normal;
-                    vertical-align: bottom;
-                    line-height: 1.2;
-                `;
+                th.innerHTML = h;
+                th.style.top = `${avgHeight}px`; // Dynamic offset
                 th.onclick = () => sortTable(table, i);
                 trHead.appendChild(th);
             });
+
             thead.appendChild(trHead);
             table.appendChild(thead);
 
@@ -3252,7 +3496,6 @@
 
                 // User Column
                 const tdUser = document.createElement('td');
-                tdUser.style = 'padding:6px;border:1px solid #444;text-align:left;';
                 const a = document.createElement('a');
                 a.href = '#';
                 a.onclick = (e) => { e.preventDefault(); showUserDetail(u.username); };
@@ -3263,10 +3506,10 @@
                 // Data Columns
                 cols.forEach((c) => {
                     const td = document.createElement('td');
-                    td.style = 'padding:6px;border:1px solid #444;';
 
                     const isPrivate = !!scanState.userPrivate[u.username];
                     const isWinCol = c === 'gamesWon';
+                    const hasEligibleGames = u.eligible > 0; // Check if there's data to calculate
 
                     // Set sorting value
                     td.dataset.value = (isPrivate && !isWinCol) ? -1 : (u[c] ?? -1);
@@ -3278,16 +3521,20 @@
                             display = Number(display).toFixed(1);
                         }
                         else if (c === 'pctAnyCompletion') {
-                            display = `${u.pctAnyCompletion}% <small style="opacity:0.7">(${u.gamesAnyCompletion}/${u.eligible})</small>`;
+                            // If no eligible games, show N/A
+                            const val = hasEligibleGames ? `${u.pctAnyCompletion}%` : 'N/A';
+                            display = `${val} <small style="opacity:0.7">(${u.gamesAnyCompletion}/${u.eligible})</small>`;
                         }
                         else if (c === 'pct25Completion') {
-                            display = `${u.pct25Completion}% <small style="opacity:0.7">(${u.games25Completion}/${u.eligible})</small>`;
+                            const val = hasEligibleGames ? `${u.pct25Completion}%` : 'N/A';
+                            display = `${val} <small style="opacity:0.7">(${u.games25Completion}/${u.eligible})</small>`;
                         }
                         else if (c === 'pct100Completion') {
-                            display = `${u.pct100Completion}% <small style="opacity:0.7">(${u.games100Completion}/${u.eligible})</small>`;
+                            const val = hasEligibleGames ? `${u.pct100Completion}%` : 'N/A';
+                            display = `${val} <small style="opacity:0.7">(${u.games100Completion}/${u.eligible})</small>`;
                         }
                         else if (c === 'compPct') {
-                            display = `${display}%`;
+                            display = hasEligibleGames ? `${display}%` : 'N/A';
                         }
                     }
 
@@ -3306,7 +3553,8 @@
                 sortTable(table, summarySort.col, summarySort.asc);
             }
             saveScanState();
-        }
+    }
+
     /***********************
      * Giveaway IndexedDB
      ***********************/
@@ -3865,6 +4113,7 @@
                 a.target = '_blank';
                 a.style = 'color:#66c0f4; text-decoration:none;';
                 a.innerText = r.name;
+                if (r.wlonly && highlightWLON) a.innerText = r.name + ' 💙';
                 tdName.appendChild(a);
             } else {
                 tdName.innerText = r.name + ' 🔒';
@@ -3924,7 +4173,7 @@
             tr.appendChild(tdHours);
 
             // Highlight whitelist only giveaways
-            if (r.wlonly && highlightWLON) tr.style.backgroundColor = '#0d5c94';
+            //if (r.wlonly && highlightWLON) tr.style.backgroundColor = '#0d5c94';
 
             tbody.appendChild(tr);
         });
