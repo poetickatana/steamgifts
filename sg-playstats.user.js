@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.9.0
+// @version      1.9.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -2814,6 +2814,57 @@
         return last;
     }
 
+    async function fetchFullWinnerList(giveawayUrl) {
+        if (!giveawayUrl) return null;
+        const winnersUrl = giveawayUrl.endsWith('/') ? `${giveawayUrl}winners` : `${giveawayUrl}/winners`;
+        let allWinners = [];
+        let page = 1;
+        let lastPage = 1;
+
+        try {
+            do {
+                const doc = await fetchDoc(`${winnersUrl}?page=${page}`);
+                if (!doc) break;
+
+                const rows = doc.querySelectorAll('.table__row-inner-wrap');
+
+                rows.forEach(row => {
+                    const statusCol = row.querySelector('.table__column--width-small.text-center');
+                    const isReceived = statusCol && statusCol.querySelector('.fa-check-circle');
+
+                    if (isReceived) {
+                        // 1. Find the heading paragraph
+                        const headingCol = row.querySelector('.table__column__heading');
+                        // 2. Find the link inside it that has the user data
+                        const winnerLink = headingCol?.querySelector('a[data-href^="/user/"], a[href^="/user/"]');
+                        if (winnerLink) {
+                            const name = winnerLink.textContent.trim();
+                            if (name) {
+                                scanState.userDisplay[name.toLowerCase()] ??= name;
+                                allWinners.push(name.toLowerCase());
+                            }
+                        }
+                    }
+                });
+
+                const pagLinks = doc.querySelectorAll('.pagination__navigation a[data-page-number]');
+                lastPage = pagLinks.length ? Math.max(...Array.from(pagLinks).map(a => parseInt(a.dataset.pageNumber))) : 1;
+
+                if (page < lastPage) {
+                    page++;
+                    await sleep(800);
+                } else {
+                    break;
+                }
+            } while (page <= lastPage);
+
+            return allWinners.length ? allWinners : null;
+        } catch (e) {
+            console.error(`Error fetching winners:`, e);
+            return null;
+        }
+    }
+
     /************ GA SCAN ************/
     async function scanGiveaways() {
         status('Scanning giveaways…');
@@ -2910,23 +2961,36 @@
                     ? creatorEl.textContent.trim().toLowerCase()
                     : null;
 
+                // 1. Detect how many copies the giveaway has
+                const heading = g.querySelector('.giveaway__heading');
+                const copiesMatch = heading?.textContent.match(/\((\d+) Copies\)/);
+                const copyCount = copiesMatch ? parseInt(copiesMatch[1]) : 1;
+
                 let winners = [];
 
                 if (forcedWinner) {
                     const negativeUser = g.querySelector('.giveaway__column--negative a[href^="/user/"]');
                     const isNegativeMatch = negativeUser && negativeUser.textContent.trim().toLowerCase() === forcedWinner;
-
-                    if (!isNegativeMatch) {
-                        // If they aren't in the negative column, we assume they are a winner on this page
-                        winners = [forcedWinner];
-                    }
+                    if (!isNegativeMatch) winners = [forcedWinner];
                 } else {
-                    winners = [...g.querySelectorAll('.giveaway__column--positive a[href^="/user/"]')]
-                        .map(a => {
-                            const name = a.textContent.trim();
-                            scanState.userDisplay[name.toLowerCase()] ??= name;
-                            return name.toLowerCase();
-                        });
+                    // If more than 3 copies, try to fetch the winners page
+                    let fullList = null;
+                    if (copyCount > 3) {
+                        console.log(`Fetching full winners for ${name}`);
+                        fullList = await fetchFullWinnerList(url);
+                    }
+
+                    if (fullList) {
+                        winners = fullList;
+                    } else {
+                        // Fallback or standard method (for <= 3 copies or inaccessible pages)
+                        winners = [...g.querySelectorAll('.giveaway__column--positive a[href^="/user/"]')]
+                            .map(a => {
+                                const name = a.textContent.trim();
+                                scanState.userDisplay[name.toLowerCase()] ??= name;
+                                return name.toLowerCase();
+                            });
+                    }
                 }
 
                 const ts = endTs;
