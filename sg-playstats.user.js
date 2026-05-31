@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.9.2
+// @version      1.9.3
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -48,7 +48,7 @@
     const PROFILE_STATS_MODE_KEY = 'playstats_profile_stats_mode';
 
     let profileStatsMode =
-        localStorage.getItem(PROFILE_STATS_MODE_KEY) || 'percentages';
+        localStorage.getItem(PROFILE_STATS_MODE_KEY) || 'compact';
 
     const settings = {
         ...DEFAULT_SETTINGS,
@@ -969,8 +969,8 @@
 
         <select id="sgProfileStatsMode">
             <option value="off">Off</option>
-            <option value="percentages">Percentages</option>
-            <option value="verbose">Verbose</option>
+            <option value="compact">Compact</option>
+            <option value="full">Full</option>
         </select>
 
     </div>
@@ -2325,7 +2325,7 @@
         const tooltip =
             `data-ui-tooltip='{"rows":[{"columns":[{"name":"${tooltipTitle}"},{"name":"${num} / ${den}","color":"#8f96a6"}]}]}'`;
 
-        if (profileStatsMode === 'verbose') {
+        if (profileStatsMode === 'full') {
             return `
                 <span style="color:#eee;cursor:help;" ${tooltip}>
                     ${pct}% (${num}/${den})
