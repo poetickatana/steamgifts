@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.9.1
+// @version      1.9.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -45,6 +45,11 @@
         giveawayCacheSize: 50000
     }
 
+    const PROFILE_STATS_MODE_KEY = 'playstats_profile_stats_mode';
+
+    let profileStatsMode =
+        localStorage.getItem(PROFILE_STATS_MODE_KEY) || 'percentages';
+
     const settings = {
         ...DEFAULT_SETTINGS,
         ...JSON.parse(localStorage.getItem('playstats_settings') || '{}')
@@ -67,7 +72,6 @@
     };
 
     let dateFormatMDY = true; // default to MM-DD-YYYY
-    let annotateON = true; // default to ON
     let highlightWLON = false; // default to OFF
     let playrateStartedON = false;
     let ignoreDlcON = false; // default to OFF
@@ -206,8 +210,8 @@
         .annotate-toggle-wrapper {
             display: flex;
             align-items: center;
+            gap: 10px;
             margin-bottom: 12px;
-            justify-content: space-between;
             font-size: 13px;
             color: #c7d5e0;
             white-space: nowrap;
@@ -217,89 +221,6 @@
             font-weight:bold;
             font-size:13px;
             color:#c7d5e0;
-        }
-
-        .annotate-toggle-switch {
-            position: relative;
-            display: inline-block;
-            /* Reduced size */
-            width: 44px;
-            height: 18px;
-        }
-
-        .annotate-toggle-slider {
-            position: absolute;
-            inset: 0;
-            background: #555;
-            border-radius: 999px;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-
-        .annotate-toggle-slider::before {
-            content: "";
-            position: absolute;
-            /* Knob is 4px smaller than the container height to create a 2px margin */
-            height: 14px;
-            width: 14px;
-            left: 2px;
-            bottom: 2px;
-            background-color: #fff; /* White knob often looks better on small switches */
-            border-radius: 50%;
-            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 2;
-        }
-
-        .annotate-toggle-switch input:checked + .annotate-toggle-slider::before {
-            /* (Width - Knob Width - Margins) = (44 - 14 - 4) = 26px */
-            transform: translateX(26px);
-        }
-
-        .annotate-toggle-switch input:checked + .annotate-toggle-slider {
-            background: #66c0f4;
-        }
-
-        .annotate-toggle-text {
-            position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
-            font-weight: 700;
-            font-size: 8px;
-            color: #fff;
-            pointer-events: none;
-            transition: opacity 0.2s;
-            white-space: nowrap; /* Prevents text from wrapping */
-        }
-
-        .annotate-toggle-switch input:not(:checked) + .annotate-toggle-slider .annotate-off {
-            opacity: 0; /* Using opacity: 0 for a cleaner look on small sizes */
-        }
-
-        .annotate-toggle-switch input:checked + .annotate-toggle-slider .annotate-on {
-            opacity: 0;
-        }
-
-        .annotate-off {
-            right: 6px;
-            opacity: 1;
-        }
-        .annotate-on {
-            left: 6px;
-            opacity: 0;
-        }
-
-        /* --- Toggle Logic --- */
-        .annotate-toggle-switch input:not(:checked) + .annotate-toggle-slider .annotate-off {
-            opacity: 1;
-        }
-        .annotate-toggle-switch input:not(:checked) + .annotate-toggle-slider .annotate-on {
-            opacity: 0;
-        }
-        .annotate-toggle-switch input:checked + .annotate-toggle-slider .annotate-off {
-            opacity: 0;
-        }
-        .annotate-toggle-switch input:checked + .annotate-toggle-slider .annotate-on {
-            opacity: 1;
         }
 
         .highlightwl-toggle-wrapper {
@@ -868,6 +789,15 @@
            color: #c7d5e0;
            border-radius: 3px;
        }
+       #sgProfileStatsMode {
+           margin-left: auto;
+           background: #1b2838;
+           color: #c7d5e0;
+           border: 1px solid #3b5871;
+           border-radius: 4px;
+           padding: 2px 6px;
+           width: auto;
+       }
        #sg-summary-table {
             width: 100%;
             margin-top: 10px;
@@ -1032,14 +962,17 @@
         </label>
     </div>
     <div class="annotate-toggle-wrapper" id="sgAnnotateToggleRow">
-        <span class="annotate-toggle-label">Annotate Results on User Profiles</span>
-        <label class="annotate-toggle-switch">
-            <input type="checkbox" id="sgAnnotateToggle">
-            <span class="annotate-toggle-slider">
-                <span class="annotate-toggle-text annotate-off">OFF</span>
-                <span class="annotate-toggle-text annotate-on">ON</span>
-            </span>
-        </label>
+
+        <span class="annotate-toggle-label">
+            User Results Summary Format
+        </span>
+
+        <select id="sgProfileStatsMode">
+            <option value="off">Off</option>
+            <option value="percentages">Percentages</option>
+            <option value="verbose">Verbose</option>
+        </select>
+
     </div>
     <div class="highlightwl-toggle-wrapper" id="sgHighlightWLToggleRow">
         <span class="highlightwl-toggle-label">Highlight Whitelist-Only Giveaways</span>
@@ -1052,7 +985,7 @@
         </label>
     </div>
     <div class="playratestarted-toggle-wrapper" id="sgPlayrateStartedToggleRow">
-        <span class="playratestarted-toggle-label">Display Started Games in Play Rate Chart</span>
+        <span class="playratestarted-toggle-label">Show Started Games in Play Rate Chart</span>
         <label class="playratestarted-toggle-switch">
             <input type="checkbox" id="sgPlayrateStartedToggle">
             <span class="playratestarted-toggle-slider">
@@ -1622,20 +1555,20 @@
         }
     });
 
-    const annotateToggle = document.getElementById('sgAnnotateToggle');
+    const profileModeSelect =
+        document.getElementById('sgProfileStatsMode');
 
-    // Load saved state from localStorage (default to true if not set)
-    const savedAnnotate = localStorage.getItem('playstats_annotate');
-    annotateToggle.checked = savedAnnotate !== null ? JSON.parse(savedAnnotate) : annotateON;
+    profileModeSelect.value = profileStatsMode;
 
-    // Set the variable to match saved state
-    annotateON = annotateToggle.checked;
+    profileModeSelect.addEventListener('change', async () => {
 
-    annotateToggle.addEventListener('change', async () => {
-        annotateON = annotateToggle.checked;
+        profileStatsMode = profileModeSelect.value;
 
-        // Save to localStorage
-        localStorage.setItem('playstats_annotate', JSON.stringify(annotateON));
+        localStorage.setItem(
+            PROFILE_STATS_MODE_KEY,
+            profileStatsMode
+        );
+
         refreshAnnotations();
     });
 
@@ -2374,13 +2307,37 @@
     }
 
     async function refreshAnnotations() {
-        // 1. Remove existing injected rows if they exist
-        document.querySelectorAll('.sg-injected-row').forEach(el => el.remove());
 
-        // 2. Only inject if the setting is ON
-        if (annotateON) {
+        document
+            .querySelectorAll('.sg-injected-row')
+            .forEach(el => el.remove());
+
+        if (profileStatsMode !== 'off') {
             await injectStatsToSgTable();
         }
+    }
+
+    const verboseStats =
+    localStorage.getItem('sgProfileStatsVerbose') === 'true';
+
+    function statDisplay(pct, num, den, tooltipTitle) {
+
+        const tooltip =
+            `data-ui-tooltip='{"rows":[{"columns":[{"name":"${tooltipTitle}"},{"name":"${num} / ${den}","color":"#8f96a6"}]}]}'`;
+
+        if (profileStatsMode === 'verbose') {
+            return `
+                <span style="color:#eee;cursor:help;" ${tooltip}>
+                    ${pct}% (${num}/${den})
+                </span>
+            `;
+        }
+
+        return `
+            <span style="color:#eee;cursor:help;" ${tooltip}>
+                ${pct}%
+            </span>
+        `;
     }
 
     async function injectStatsToSgTable() {
@@ -2415,38 +2372,54 @@
 
         // Achievement Row
         const achHtml = `
-            <small style="opacity: 0.6;">Any%</small>
-            <span style="color: #eee; cursor: help;" data-ui-tooltip='{"rows":[{"columns":[{"name":">0 🏆"},{"name":"${stats.gamesAnyCompletion} / ${stats.eligible}","color":"#8f96a6"}]}]}'>
-                ${stats.pctAnyCompletion}%
-            </span>
-            <span style="margin: 0 5px; opacity: 0.3;">|</span>
+            <small style="opacity:0.6;">Any%</small>
+            ${statDisplay(
+                stats.pctAnyCompletion,
+                stats.gamesAnyCompletion,
+                stats.eligible,
+                '>0 🏆'
+            )}
 
-            <small style="opacity: 0.6;">>25%</small>
-            <span style="color: #eee; cursor: help;" data-ui-tooltip='{"rows":[{"columns":[{"name":">25% 🏆"},{"name":"${stats.games25Completion} / ${stats.eligible}","color":"#8f96a6"}]}]}'>
-                ${stats.pct25Completion}%
-            </span>
-            <span style="margin: 0 5px; opacity: 0.3;">|</span>
+            <span style="margin:0 5px;opacity:0.3;">|</span>
 
-            <small style="opacity: 0.6;">100%</small>
-            <span style="color: #eee; cursor: help;" data-ui-tooltip='{"rows":[{"columns":[{"name":"100% 🏆"},{"name":"${stats.games100Completion} / ${stats.eligible}","color":"#8f96a6"}]}]}'>
-                ${stats.pct100Completion}%
-            </span>
-            <span style="margin: 0 5px; opacity: 0.3;">|</span>
+            <small style="opacity:0.6;">>25%</small>
+            ${statDisplay(
+                stats.pct25Completion,
+                stats.games25Completion,
+                stats.eligible,
+                '>25% 🏆'
+            )}
 
-            <small style="opacity: 0.6;">Avg Completion</small>
-            <span style="color: #eee;">${stats.compPct}%</span>
+            <span style="margin:0 5px;opacity:0.3;">|</span>
+
+            <small style="opacity:0.6;">100%</small>
+            ${statDisplay(
+                stats.pct100Completion,
+                stats.games100Completion,
+                stats.eligible,
+                '100% 🏆'
+            )}
+
+            <span style="margin:0 5px;opacity:0.3;">|</span>
+
+            <small style="opacity:0.6;">Avg Completion</small>
+            <span style="color:#eee;">${stats.compPct}%</span>
         `;
 
         // Playtime Row
         const playHtml = `
-            <small style="opacity: 0.6;">>0 Hours</small>
-            <span style="color: #eee; cursor: help;" data-ui-tooltip='{"rows":[{"columns":[{"name":">0 Hours"},{"name":"${stats.anyHours} / ${stats.gamesWon}","color":"#8f96a6"}]}]}'>
-                ${stats.pctAnyHours}%
-            </span>
-            <span style="margin: 0 5px; opacity: 0.3;">|</span>
+            <small style="opacity:0.6;">>0 Hours</small>
+            ${statDisplay(
+                stats.pctAnyHours,
+                stats.anyHours,
+                stats.gamesWon,
+                '>0 Hours'
+            )}
 
-            <small style="opacity: 0.6;">Avg Playtime</small>
-            <span style="color: #eee;">${stats.avgHours}h </span>
+            <span style="margin:0 5px;opacity:0.3;">|</span>
+
+            <small style="opacity:0.6;">Avg Playtime</small>
+            <span style="color:#eee;">${stats.avgHours}h</span>
         `;
 
         // 1. Add Achievements
