@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.9.3
+// @version      1.9.4
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -11,6 +11,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        GM_deleteValue
 // @connect      steamcommunity.com
 // @connect      store.steampowered.com
 // @connect      api.steampowered.com
@@ -37,6 +38,9 @@
     const ESGST_BATCH_SIZE = 400;
     const ESGST_CACHE_KEY = 'esgst_cv_cache_v1';
     const ESGST_CACHE_TTL = 24 * 60 * 60; // seconds
+    const STEAM_META_BATCH_SIZE = 10;
+    const STEAM_META_CACHE_KEY = 'steam_meta_cache_v1';
+    const STEAM_META_CACHE_TTL = 30 * 24 * 60 * 60; // 1 month in seconds
 
     const DEFAULT_SETTINGS = {
         steamApiKey: '',
@@ -641,6 +645,43 @@
         .sg-checkbox-label span {
             user-select: none;
         }
+
+        .sg-review-field {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .sg-review-filter {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .sg-review-filter input[type="number"] {
+            width: 90px;
+            background: #3a3a3a;
+            border: 1px solid #555;
+            color: #ddd;
+            border-radius: 4px;
+            padding: 0 8px;
+        }
+
+        .sg-review-filter input:disabled {
+            opacity: 0.5;
+        }
+
+        .sg-review-filter input[type="number"]::-webkit-outer-spin-button,
+        .sg-review-filter input[type="number"]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .sg-review-filter input[type="number"] {
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+
         .sg-section-title {
             font-size: 16px;
             opacity: 0.8;
@@ -917,6 +958,34 @@
                                 <input type="checkbox" id="sgFullCvOnly" title="Only include Full CV giveaways">
                                 <span>Full CV</span>
                             </label>
+
+                            <div class="sg-review-filter">
+                                <label class="sg-checkbox-label">
+                                    <input type="checkbox" id="sgReviewFilterEnabled">
+                                    <span>Filter by reviews</span>
+                                </label>
+
+                                <div class="sg-review-field">
+                                    <input
+                                        id="sgMinReviewScore"
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        placeholder="score"
+                                        title="Minimum review score (%)"
+                                    >
+                                    <span>%</span>
+                                </div>
+
+                                <input
+                                    id="sgMinReviewCount"
+                                    type="number"
+                                    min="0"
+                                    placeholder="num reviews"
+                                    title="Minimum number of reviews"
+                                >
+                            </div>
+
                             <label class="sg-creator-field">
                                 <span>Filter by creator</span>
                                 <input id="sgCreatorFilter"
@@ -2070,6 +2139,98 @@
         };
     }
 
+    function getMinReviewWins(wins, minReviews, minScore) {
+        const cache = loadSteamMetaCache();
+
+        if (!cache?.apps) return [];
+
+        return wins.filter(g => {
+            const meta = cache.apps[g.app];
+            if (!meta) return false;
+
+            return (
+                meta.reviews >= minReviews &&
+                meta.reviewScore >= minScore
+            );
+        });
+    }
+
+    function fetchReviewData(appid) {
+        return new Promise((resolve, reject) => {
+
+            const url =
+                `https://store.steampowered.com/appreviews/${appid}` +
+                `?json=1&num_per_page=0&language=all&purchase_type=all`;
+
+            GM_xmlhttpRequest({
+                method: 'GET',
+                url,
+
+                onload: response => {
+                    try {
+                        const data = JSON.parse(response.responseText);
+
+                        resolve({
+                            total_positive:
+                                data?.query_summary?.total_positive ?? 0,
+
+                            total_reviews:
+                                data?.query_summary?.total_reviews ?? 0
+                        });
+
+                    } catch (err) {
+                        reject(err);
+                    }
+                },
+
+                onerror: reject
+            });
+        });
+    }
+
+    async function fetchSteamMeta(appid) {
+        const reviewData = await fetchReviewData(appid);
+
+        const reviewPct =
+            reviewData.total_reviews > 0
+            ? (reviewData.total_positive * 100 /
+               reviewData.total_reviews)
+            : 0;
+
+        return {
+            reviews: reviewData.total_reviews,
+            reviewScore: reviewPct
+        };
+    }
+
+    function loadSteamMetaCache() {
+        const cache = GM_getValue(STEAM_META_CACHE_KEY, null);
+        if (!cache) return null;
+
+        if (!cache.fetchedAt) return cache;
+
+        const now = Math.floor(Date.now() / 1000);
+        if (now - cache.fetchedAt > STEAM_META_CACHE_TTL) {
+            return null;
+        }
+
+        return cache;
+    }
+
+    function getMissingSteamMetaIds(wins, cache) {
+        const apps = new Set();
+
+        for (const g of wins) {
+            if (!g.app) continue;
+
+            if (!cache.apps?.[g.app]) {
+                apps.add(g.app);
+            }
+        }
+
+        return [...apps];
+    }
+
     function mergeIntoCache(cache, ncv, rcv) {
         for (const [id, data] of Object.entries(ncv.found.apps || {})) {
             cache.apps[id] ??= {};
@@ -2088,6 +2249,51 @@
             cache.subs[id] ??= {};
             cache.subs[id].rcv = data;
         }
+    }
+
+    async function ensureSteamMetaData(wins, updateStatus = () => {}) {
+
+        let cache = loadSteamMetaCache();
+
+        if (!cache) {
+            cache = {
+                fetchedAt: 0,
+                apps: {}
+            };
+        }
+
+        const missing = getMissingSteamMetaIds(wins, cache);
+
+        const BATCH_SIZE = 10;
+
+        let completed = 0;
+
+        for (let i = 0; i < missing.length; i += STEAM_META_BATCH_SIZE) {
+
+            const batch = missing.slice(i, i + STEAM_META_BATCH_SIZE);
+
+            updateStatus(
+                `Fetching Steam review data (${completed}/${missing.length})...`
+            );
+
+            const results = await Promise.all(
+                batch.map(async appid => ({
+                    appid,
+                    meta: await fetchSteamMeta(appid)
+                }))
+            );
+
+            for (const result of results) {
+                cache.apps[result.appid] = result.meta;
+                completed++;
+            }
+
+            await sleep(100);
+        }
+
+        cache.fetchedAt = Math.floor(Date.now() / 1000);
+
+        GM_setValue(STEAM_META_CACHE_KEY, cache);
     }
 
     async function ensureEsgstCvData(wins) {
@@ -4336,7 +4542,7 @@
         return map;
     }
 
-    function isFullScan(username, whitelistOnly, fullCVOnly, creatorFilter, startDateInput, endDateInput) {
+    function isFullScan(username, whitelistOnly, fullCVOnly, reviewFilter, creatorFilter, startDateInput, endDateInput) {
         // Only valid on a user's Won page
         if (!isUserWonPage) return false;
 
@@ -4353,7 +4559,7 @@
         const hasSgFilters = urlParams.has('search') || urlParams.has('type');
 
         // Check for your script's specific filters (Whitelist, CV, Date, etc.)
-        const hasScriptFilters = whitelistOnly || fullCVOnly || creatorFilter!== "" || startDateInput !== "" || endDateInput !== "";
+        const hasScriptFilters = whitelistOnly || fullCVOnly || reviewFilter || creatorFilter!== "" || startDateInput !== "" || endDateInput !== "";
 
         return !hasSgFilters && !hasScriptFilters && usernameMatch;
     }
@@ -4364,6 +4570,10 @@
             const mode = scanState.mode;
             const whitelistOnly = document.getElementById('sgWhitelistOnly').checked;
             const fullCVOnly = document.getElementById('sgFullCvOnly').checked;
+            const reviewFilterEnabled = document.getElementById('sgReviewFilterEnabled').checked;
+            const minReviews = Number(document.getElementById('sgMinReviewCount').value || 0);
+            const minReviewScore = Number(document.getElementById('sgMinReviewScore').value || 0);
+
             const username = userInput.value.trim();
             scanState.userDisplay[username.toLowerCase()] ??= username;
             const creatorFilter = creatorInput.value.trim().toLowerCase();
@@ -4371,7 +4581,7 @@
             const startDateInput = document.getElementById('sgStartDate').value;
             const endDateInput   = document.getElementById('sgEndDate').value;
 
-            const fullScan = isFullScan(username, whitelistOnly, fullCVOnly, creatorFilter, startDateInput, endDateInput)
+            const fullScan = isFullScan(username, whitelistOnly, fullCVOnly, reviewFilterEnabled, creatorFilter, startDateInput, endDateInput)
 
             // Convert to UNIX seconds (or null)
             const startTs = startDateInput
@@ -4455,6 +4665,27 @@
                     if (endTs && g.ts > endTs) return false;
                     return true;
                 });
+            }
+
+            /* -------------------------------------------------
+               Review filtering
+            ------------------------------------------------- */
+            if (
+                reviewFilterEnabled &&
+                (minReviews > 0 || minReviewScore > 0)
+            ) {
+                status('Filtering by review requirements...');
+
+                await ensureSteamMetaData(
+                    filteredWins,
+                    msg => status(msg)
+                );
+
+                filteredWins = getMinReviewWins(
+                    filteredWins,
+                    minReviews,
+                    minReviewScore
+                );
             }
 
             /* -------------------------------------------------
