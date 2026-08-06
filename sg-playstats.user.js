@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.9.5
+// @version      1.9.6
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1814,6 +1814,51 @@
         return new DOMParser().parseFromString(html, 'text/html');
     }
 
+    function getTotalJsonPages() {
+        try {
+            // 1. On "Won" pages, calculate total from "Gifts Won" + "Not Received"
+            if (isUserWonPage) {
+                const rows = document.querySelectorAll('.featured__table__row');
+                for (const row of rows) {
+                    const label = row.querySelector('.featured__table__row__left')?.textContent?.trim();
+                    if (label === 'Gifts Won') {
+                        const rightCol = row.querySelector('.featured__table__row__right');
+                        if (!rightCol) break;
+
+                        // Grab number directly from the main link in the right column
+                        const wonLink = rightCol.querySelector('a');
+                        const wonCount = parseInt(wonLink?.textContent.replace(/,/g, ''), 10) || 0;
+
+                        // Extract "Not Received" count from tooltip if present
+                        let notReceivedCount = 0;
+                        const tooltipContainer = rightCol.querySelector('[data-ui-tooltip]');
+                        if (tooltipContainer) {
+                            const tooltipDataStr = tooltipContainer.getAttribute('data-ui-tooltip') || '';
+                            const nrMatch = tooltipDataStr.match(/"Not Received"\}?,\s*\{"name"\s*:\s*"(\d+)"/);
+                            if (nrMatch) {
+                                notReceivedCount = parseInt(nrMatch[1], 10) || 0;
+                            }
+                        }
+
+                        const totalCount = wonCount + notReceivedCount;
+                        if (totalCount > 0) return Math.ceil(totalCount / 100);
+                    }
+                }
+            }
+
+            // 2. For all other pages (Groups, User Sent/Profile, etc.), use the Sidebar count
+            const sidebarCountEl = document.querySelector('.sidebar__navigation__item__count');
+            if (sidebarCountEl) {
+                const count = parseInt(sidebarCountEl.textContent.replace(/,/g, ''), 10);
+                if (!isNaN(count) && count > 0) return Math.ceil(count / 100);
+            }
+        } catch (err) {
+            console.warn('Could not pre-calculate total JSON pages:', err);
+        }
+
+        return null;
+    }
+    
     function isWhitelistOnlyGiveaway(g) {
         const hasWhitelist = !!g.querySelector('.giveaway__column--whitelist');
         const hasGroup = !!g.querySelector('.giveaway__column--group');
@@ -3065,220 +3110,108 @@
 
         const newlyScanned = [];
         let stopScanning = false;
+        let page = 1;
+        let totalPages = getTotalJsonPages(); // Pre-calculated from DOM
+
+        while (!stopScanning) {
+            const pageStatus = totalPages
+                    ? `Scanning page ${page} / ${totalPages}…`
+                    : `Scanning page ${page}…`;
+            status(pageStatus);
+
+            let json;
+            try {
+                // Include &include_winners=1 to fetch all winners directly in the payload
+                const res = await fetch(`${base}?format=json&include_winners=1&page=${page}`);
+                if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+                json = await res.json();
+            } catch (err) {
+                console.error(`Failed to fetch JSON page ${page}:`, err);
+                break;
+            }
+
+            const results = json?.results || [];
+
+            // Stop if API returns unsuccessful or an empty array
+            if (!json?.success || !results.length) {
+                break;
+            }
+
+            for (const g of results) {
+                const endTs = g.end_timestamp || null;
+                const createdTs = g.created_timestamp || null;
+
+                // Extract winners directly from the payload
+                let winners = [];
+
+                if (forcedWinner) {
+                    // On user won page, forcedWinner is guaranteed
+                    winners = [forcedWinner];
+                } else if (Array.isArray(g.winners)) {
+                    winners = g.winners
+                        // Only include confirmed winners who have provided feedback (received === true)
+                        // and have a valid username string
+                        .filter(w => w?.received === true && typeof w.username === 'string' && w.username.trim() !== '')
+                        .map(w => {
+                            const uname = w.username.trim().toLowerCase();
+                            // Save display name casing lookup
+                            scanState.userDisplay[uname] ??= w.username.trim();
+                            return uname;
+                        });
+                }
+
+                // Skip entries with no timestamp or unresolved/empty winners
+                if (!endTs || !winners.length) continue;
+
+                // 14-day safety window cache check
+                if (endTs < now - GA_SAFETY_WINDOW_DAYS * 24 * 60 * 60) {
+                    if (endTs <= lastCacheUpdate) {
+                        stopScanning = true;
+                        break;
+                    }
+                }
+
+                const name = g.name;
+                const url = g.link;
+                const app = g.app_id ? Number(g.app_id) : null;
+                const sub = g.package_id ? Number(g.package_id) : null;
+                const hasWhitelist = !!g.whitelist;
+                const wlonly = hasWhitelist && !g.group;
+                const creator = g.creator?.username ? g.creator.username.toLowerCase() : null;
+
+                const gid = getGiveawayId({ url, name, ts: endTs });
+
+                newlyScanned.push({
+                    gid, name, url, app, sub, isSub: !!sub,
+                    ts: endTs, createdTs, wlonly, hasWhitelist, creator, winners
+                });
+            }
+
+            // Break if we received fewer items than per_page (last page reached)
+            const perPage = json.per_page || 100;
+            if (results.length < perPage) {
+                break;
+            }
+
+            page++;
+            await sleep(SCAN_DELAY);
+        }
 
         /* =========================================================================
-           PATH 1: FAST JSON SCAN (User Won Pages)
+           MERGE & CACHE UPDATE
            ========================================================================= */
-        if (isUserWonPage) {
-            let page = 1;
-
-            while (!stopScanning) {
-                status(`Scanning page ${page}…`);
-
-                let json;
-                try {
-                    const res = await fetch(`${base}?format=json&page=${page}`);
-                    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-                    json = await res.json();
-                } catch (err) {
-                    console.error(`Failed to fetch JSON page ${page}:`, err);
-                    break;
-                }
-
-                const results = json?.results || [];
-
-                // Break if we hit an empty page or API failed
-                if (!json?.success || !results.length) {
-                    break;
-                }
-
-                for (const g of results) {
-                    const endTs = g.end_timestamp || null;
-                    const createdTs = g.created_timestamp || null;
-
-                    // 14-day safety window cache check
-                    if (endTs && endTs < now - GA_SAFETY_WINDOW_DAYS * 24 * 60 * 60) {
-                        if (endTs <= lastCacheUpdate) {
-                            stopScanning = true;
-                            break;
-                        }
-                    }
-
-                    // Construct clean giveaway object
-                    const name = g.name;
-                    const url = g.link;
-                    const app = g.app_id ? Number(g.app_id) : null;
-                    const sub = g.package_id ? Number(g.package_id) : null;
-                    const hasWhitelist = !!g.whitelist;
-                    const wlonly = hasWhitelist && !g.group;
-                    const creator = g.creator?.username ? g.creator.username.toLowerCase() : null;
-                    const winners = forcedWinner ? [forcedWinner] : [];
-
-                    const gid = getGiveawayId({ url, name, ts: endTs });
-
-                    newlyScanned.push({
-                        gid, name, url, app, sub, isSub: !!sub,
-                        ts: endTs, createdTs, wlonly, hasWhitelist, creator, winners
-                    });
-                }
-
-                // If the item count is less than per_page (usually 100), we've hit the last page
-                const perPage = json.per_page || 100;
-                if (results.length < perPage) {
-                    break;
-                }
-
-                page++;
-                await sleep(SCAN_DELAY);
-            }
-
-     /* =========================================================================
-           PATH 2: DOM HTML SCAN (Group & Standard Pages)
-        ========================================================================= */
-        } else {
-            let maxPage = 1;
-
-            // ESGST fast path
-            const esgstLastPageLink = document.querySelector('.esgst-page-link-last');
-            if (esgstLastPageLink) {
-                const match = esgstLastPageLink.href.match(/page=(\d+)/);
-                if (match) maxPage = Number(match[1]);
-            }
-
-            // Group fast path
-            const elements = document.querySelectorAll('a:has(.fa-angle-double-right)');
-
-            const groupLastPageLink = Array.from(elements).find(el =>
-              el.textContent.includes('Last')
-            );
-
-            if (groupLastPageLink) {
-                maxPage = groupLastPageLink.getAttribute('data-page-number');
-            }
-
-            if (maxPage === 1) {
-                maxPage = await discoverLastPage(base);
-            }
-
-            for (let page = 1; page <= maxPage && !stopScanning; page++) {
-                status(`Scanning page ${page}/${maxPage}`);
-                const doc = await fetchDoc(`${base}?page=${page}`);
-
-                const rows = doc.querySelectorAll('.giveaway__row-inner-wrap');
-
-                for (const g of rows) {
-                    //const name = g.querySelector('.giveaway__heading__name')?.textContent.trim();
-                    // 1. Find the search icon link which contains the full title
-                    const searchLink = g.querySelector('a.giveaway__icon[href^="/game/"]');
-                    const fullTitle = searchLink?.getAttribute('title') || "";
-
-                    // 2. Extract the name after the prefix, or fallback to the standard name link text
-                    let name;
-                    if (fullTitle.includes("Free Steam Giveaways and Keys for ")) {
-                        name = fullTitle.split("Free Steam Giveaways and Keys for ").pop().trim();
-                    } else {
-                        name = g.querySelector('.giveaway__heading__name')?.textContent.trim();
-                    }
-
-                    const url  = g.querySelector('.giveaway__heading__name')?.href || null;
-
-                    const appLink = g.querySelector('a[href*="/app/"], a[href*="/sub/"]')?.href;
-                    let app = null;
-                    let sub = null;
-
-                    if (appLink) {
-                        const appMatch = appLink.match(/\/app\/(\d+)/);
-                        const subMatch = appLink.match(/\/sub\/(\d+)/);
-
-                        if (appMatch) app = Number(appMatch[1]);
-                        if (subMatch) sub = Number(subMatch[1]);
-                    }
-
-                    const timestampEls = g.querySelectorAll('span[data-timestamp]');
-
-                    const endTs = timestampEls[0]
-                        ? Number(timestampEls[0].dataset.timestamp)
-                        : null;
-
-                    const createdTs = timestampEls[1]
-                        ? Number(timestampEls[1].dataset.timestamp)
-                        : null;
-
-                    const { hasWhitelist, wlonly } = parseGiveawayAccess(g);
-
-                    const creatorEl = g.querySelector('.giveaway__column--width-fill a[href^="/user/"]');
-                    const creator = creatorEl
-                        ? creatorEl.textContent.trim().toLowerCase()
-                        : null;
-
-                    // 1. Detect how many copies the giveaway has
-                    const heading = g.querySelector('.giveaway__heading');
-                    const copiesMatch = heading?.textContent.match(/\((\d+) Copies\)/);
-                    const copyCount = copiesMatch ? parseInt(copiesMatch[1]) : 1;
-
-                    let winners = [];
-
-                    if (forcedWinner) {
-                        const negativeUser = g.querySelector('.giveaway__column--negative a[href^="/user/"]');
-                        const isNegativeMatch = negativeUser && negativeUser.textContent.trim().toLowerCase() === forcedWinner;
-                        if (!isNegativeMatch) winners = [forcedWinner];
-                    } else {
-                        // If more than 3 copies, try to fetch the winners page
-                        let fullList = null;
-                        if (copyCount > 3) {
-                            console.log(`Fetching full winners for ${name}`);
-                            fullList = await fetchFullWinnerList(url);
-                        }
-
-                        if (fullList) {
-                            winners = fullList;
-                        } else {
-                            // Fallback or standard method (for <= 3 copies or inaccessible pages)
-                            winners = [...g.querySelectorAll('.giveaway__column--positive a[href^="/user/"]')]
-                                .map(a => {
-                                    const name = a.textContent.trim();
-                                    scanState.userDisplay[name.toLowerCase()] ??= name;
-                                    return name.toLowerCase();
-                                });
-                        }
-                    }
-
-                    const ts = endTs;
-                    if (!winners.length || !ts) continue;
-
-                    if (ts < now - GA_SAFETY_WINDOW_DAYS * 24 * 60 * 60) {
-                        if (ts <= lastCacheUpdate) {
-                            stopScanning = true;
-                            break;
-                        }
-                    }
-
-                    const gid = getGiveawayId({ url, name, ts });
-
-                    newlyScanned.push({
-                        gid, name, url, app, sub, isSub: !!sub,
-                        ts: endTs, createdTs, wlonly, hasWhitelist, creator, winners
-                    });
-                }
-
-                await sleep(SCAN_DELAY);
-            }
-        }
-        // Build a fast lookup Map for existing cached giveaways by GID
         const existingCacheMap = new Map(cachedGiveaways.map(c => [c.gid, c]));
 
-        // Merge newly scanned giveaways while preserving enriched fields (like groupExclusive)
         const mergedScanned = newlyScanned.map(newG => {
             const cachedG = existingCacheMap.get(newG.gid);
             if (!cachedG) return newG;
 
             return {
-                ...cachedG, // Keep cached properties (e.g., groupExclusive)
-                ...newG     // Overwrite with updated winner list & fresh properties
+                ...cachedG, // Preserve enriched flags like groupExclusive
+                ...newG     // Overwrite with fresh winner data & timestamps
             };
         });
 
-        // Combine newly updated ones with untouched older cached ones
         const newIds = new Set(newlyScanned.map(g => g.gid));
         const merged = [
             ...mergedScanned,
