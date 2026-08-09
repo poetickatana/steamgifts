@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.9.6
+// @version      1.9.7
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -28,7 +28,7 @@
     'use strict';
 
     /************ CONFIG ************/
-    const SCAN_DELAY = 1000; // ms between page fetches
+    const SCAN_DELAY = 500; // ms between page fetches
 
     const GA_SAFETY_WINDOW_DAYS = 14; // Ignore cached data for wins younger than value (Default = 14 days)
     const STEAM_TTL_CLEANUP_INTERVAL_HOURS = 1; // Cooldown period for automatic Steam cache pruning (default = 1 hour)
@@ -1157,6 +1157,18 @@
         }
     })();
 
+    // Hide whitelist-only checkbox on group pages
+    const whitelistCheckbox = document.getElementById('sgWhitelistOnly');
+
+    if (whitelistCheckbox) {
+        if (isGroupPage) {
+            const label = whitelistCheckbox.closest('.sg-checkbox-label');
+            if (label) {
+                label.style.display = 'none';
+            }
+        }
+    }
+
     /************ PANEL BUTTON FOR RESTORE ************/
     const restoreBtn = document.createElement('button');
     restoreBtn.innerText = 'Restore Last Scan Results';
@@ -1858,7 +1870,7 @@
 
         return null;
     }
-    
+
     function isWhitelistOnlyGiveaway(g) {
         const hasWhitelist = !!g.querySelector('.giveaway__column--whitelist');
         const hasGroup = !!g.querySelector('.giveaway__column--group');
@@ -3145,8 +3157,13 @@
                 let winners = [];
 
                 if (forcedWinner) {
-                    // On user won page, forcedWinner is guaranteed
-                    winners = [forcedWinner];
+                    // On user won page, verify the gift wasn't marked as "Not Received"
+                    if (Array.isArray(g.winners)) {
+                        const isReceived = g.winners.some(w => w?.received === true);
+                        if (isReceived) {
+                            winners = [forcedWinner];
+                        }
+                    }
                 } else if (Array.isArray(g.winners)) {
                     winners = g.winners
                         // Only include confirmed winners who have provided feedback (received === true)
