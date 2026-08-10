@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.9.7
+// @version      1.10.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -18,8 +18,6 @@
 
 // ==/UserScript==
 //
-// Future goals?
-//    Multi-page winner scraping for giveaways with copies > 3.
 //
 //KNOWN ISSUES
 // Assuming that a profile is private if games?.length === 0 is not safe. If a profile is marked as private due to API issues, it won't be scanned again until the cache expires.
@@ -67,7 +65,8 @@
     membersSet : null,
     activeUser: null, // username if in detail view
     userDisplay: {}, // lowercase → display casing
-    userPrivate: {}
+    userPrivate: {},
+    showMissingOnly: false
     };
 
     let summarySort = {
@@ -78,7 +77,8 @@
     let dateFormatMDY = true; // default to MM-DD-YYYY
     let highlightWLON = false; // default to OFF
     let playrateStartedON = false;
-    let ignoreDlcON = false; // default to OFF
+    let ignoreDlcON = true; // default to ON
+    let excludeMissingON = false; // default to OFF
 
     let isDragging = false;
     let dragMoved = false;
@@ -428,6 +428,7 @@
         .ignoredlc-toggle-wrapper {
             display: flex;
             align-items: center;
+            margin-bottom: 12px;
             justify-content: space-between;
             font-size: 13px;
             color: #c7d5e0;
@@ -522,6 +523,105 @@
         .ignoredlc-toggle-switch input:checked + .ignoredlc-toggle-slider .ignoredlc-on {
             opacity: 1;
         }
+
+        .excludemissing-toggle-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #c7d5e0;
+            white-space: nowrap;
+        }
+
+        .excludemissing-toggle-label  {
+            font-weight:bold;
+            font-size:13px;
+            color:#c7d5e0;
+        }
+
+        .excludemissing-toggle-switch {
+            position: relative;
+            display: inline-block;
+            /* Reduced size */
+            width: 44px;
+            height: 18px;
+        }
+
+        .excludemissing-toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #555;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .excludemissing-toggle-slider::before {
+            content: "";
+            position: absolute;
+            /* Knob is 4px smaller than the container height to create a 2px margin */
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background-color: #fff; /* White knob often looks better on small switches */
+            border-radius: 50%;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+
+        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider::before {
+            /* (Width - Knob Width - Margins) = (44 - 14 - 4) = 26px */
+            transform: translateX(26px);
+        }
+
+        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider {
+            background: #66c0f4;
+        }
+
+        .excludemissing-toggle-text {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: 700;
+            font-size: 8px;
+            color: #fff;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            white-space: nowrap; /* Prevents text from wrapping */
+        }
+
+        .excludemissing-toggle-switch input:not(:checked) + .excludemissing-toggle-slider .excludemissing-off {
+            opacity: 0; /* Using opacity: 0 for a cleaner look on small sizes */
+        }
+
+        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider .excludemissing-on {
+            opacity: 0;
+        }
+
+        .excludemissing-off {
+            right: 6px;
+            opacity: 1;
+        }
+        .excludemissing-on {
+            left: 6px;
+            opacity: 0;
+        }
+
+        /* --- Toggle Logic --- */
+        .excludemissing-toggle-switch input:not(:checked) + .excludemissing-toggle-slider .excludemissing-off {
+            opacity: 1;
+        }
+        .excludemissing-toggle-switch input:not(:checked) + .excludemissing-toggle-slider .excludemissing-on {
+            opacity: 0;
+        }
+        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider .excludemissing-off {
+            opacity: 0;
+        }
+        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider .excludemissing-on {
+            opacity: 1;
+        }
+
         .sg-pill-group {
             display: flex;
             border-radius: 8px;
@@ -1074,6 +1174,16 @@
             </span>
         </label>
     </div>
+    <div class="excludemissing-toggle-wrapper" id="sgExcludeMissingToggleRow">
+        <span class="excludemissing-toggle-label">Exclude Missing Games From Play Rate Calculations</span>
+        <label class="excludemissing-toggle-switch">
+            <input type="checkbox" id="sgExcludeMissingToggle">
+            <span class="excludemissing-toggle-slider">
+                <span class="excludemissing-toggle-text excludemissing-off">OFF</span>
+                <span class="excludemissing-toggle-text excludemissing-on">ON</span>
+            </span>
+        </label>
+    </div>
     `;
     document.body.appendChild(panel);
 
@@ -1243,6 +1353,11 @@
     const ignoreDlcToggleRow = document.getElementById('sgIgnoreDlcToggleRow');
     if (ignoreDlcToggleRow) {
         settingsPanel.appendChild(ignoreDlcToggleRow);
+    }
+
+    const excludeMissingToggleRow = document.getElementById('sgExcludeMissingToggleRow');
+    if (excludeMissingToggleRow) {
+        settingsPanel.appendChild(excludeMissingToggleRow);
     }
 
     topControls.appendChild(restoreBtn);
@@ -1700,6 +1815,23 @@
 
         // Save to localStorage
         localStorage.setItem('playstats_ignoreDlc', JSON.stringify(ignoreDlcON));
+        refreshAnnotations();
+    });
+
+    const excludeMissingToggle = document.getElementById('sgExcludeMissingToggle');
+
+    // Load saved state from localStorage (default to true if not set)
+    const savedexcludeMissing = localStorage.getItem('playstats_excludeMissing');
+    excludeMissingToggle.checked = savedexcludeMissing !== null ? JSON.parse(savedexcludeMissing) : excludeMissingON;
+
+    // Set the variable to match saved state
+    excludeMissingON = excludeMissingToggle.checked;
+
+    excludeMissingToggle.addEventListener('change', async () => {
+        excludeMissingON = excludeMissingToggle.checked;
+
+        // Save to localStorage
+        localStorage.setItem('playstats_excludeMissing', JSON.stringify(excludeMissingON));
         refreshAnnotations();
     });
 
@@ -2440,6 +2572,7 @@
             const [done, total] = w.ach.split('/').map(Number);
             if (!total || isNaN(done) || isNaN(total)) continue;
 
+            if (w.isMissing && excludeMissingON) continue;
             eligible++;
 
             // 3. Process Yearly Trend (Based on win date)
@@ -3244,11 +3377,15 @@
     }
 
     function showUserDetail(username, fullScan = false) {
-        // UI Cleanup
-        resultsWrap.querySelector('table')?.remove();
-        ['#dismiss-table', '#write-csv', '#flat-view', '#back-to-summary'].forEach(id => resultsWrap.querySelector(id)?.remove());
+        // Dynamic cleanup of header buttons
+        ['table', '#dismiss-table', '#write-csv', '#flat-view', '#winners-view', '#back-to-summary', '#toggle-missing-filter'].forEach(sel => {
+            resultsWrap.querySelector(sel)?.remove();
+        });
 
         scanState.activeUser = username;
+        scanState.viewMode = 'user';
+        scanState.showMissingOnly = false; // Reset missing filter when switching users
+
         const wins = scanState.userMap[username];
         if (!wins) return;
 
@@ -3284,10 +3421,7 @@
                 const pct25 = d.total > 0 ? Math.round((d.qualified / d.total) * 100) : 0;
                 const totalH = (d.total / maxYearWins) * 100;
 
-                // Use conditional logic for the bar stacking
                 const anyH = playrateStartedON ? (d.any_completion / d.total) * 100 : 0;
-
-                // If started is ON, blue is relative to yellow. If OFF, blue is relative to total.
                 const qualH = playrateStartedON
                     ? (d.any_completion > 0 ? (d.qualified / d.any_completion) * 100 : 0)
                     : (d.total > 0 ? (d.qualified / d.total) * 100 : 0);
@@ -3320,72 +3454,43 @@
         };
 
         const statusEl = document.getElementById('sgStatus');
-        statusEl.style.padding = "15px";
-
-        statusEl.innerHTML = `
-            <div style="display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: space-between; align-items: stretch; gap: 20px; color: #d2d2d2;">
-
-                <div style="flex: 0 0 auto;">
-                    <b style="font-size: 1.1em;">Detailed results for
-                        <a href="https://www.steamgifts.com/user/${scanState.userDisplay[username] ?? username}" target="_blank" style="color:#66c0f4;">
-                            ${scanState.userDisplay[username] ?? username}
-                        </a>
-                    </b>
-                    <div style="margin-top: 10px; border-top: 1px solid #3d4450; padding-top: 10px;">
-                        ${formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion.toFixed(1), '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`)}
-                        ${formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion.toFixed(1), '%', `(${stats.games25Completion}/${stats.eligible})`)}
-                        ${formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion.toFixed(1), '%', `(${stats.games100Completion}/${stats.eligible})`)}
-                        ${formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct.toFixed(1), '%')}
-                        ${formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`, true)}
-                        ${formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h', '', true)}
+        if (statusEl) {
+            statusEl.style.padding = "15px";
+            statusEl.innerHTML = `
+                <div style="display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: space-between; align-items: stretch; gap: 20px; color: #d2d2d2;">
+                    <div style="flex: 0 0 auto;">
+                        <b style="font-size: 1.1em;">Detailed results for
+                            <a href="https://www.steamgifts.com/user/${scanState.userDisplay[username] ?? username}" target="_blank" style="color:#66c0f4;">
+                                ${scanState.userDisplay[username] ?? username}
+                            </a>
+                        </b>
+                        <div style="margin-top: 10px; border-top: 1px solid #3d4450; padding-top: 10px;">
+                            ${formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion.toFixed(1), '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`)}
+                            ${formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion.toFixed(1), '%', `(${stats.games25Completion}/${stats.eligible})`)}
+                            ${formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion.toFixed(1), '%', `(${stats.games100Completion}/${stats.eligible})`)}
+                            ${formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct.toFixed(1), '%')}
+                            ${formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`, true)}
+                            ${formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h', '', true)}
+                        </div>
+                        ${scanState.userPrivate[username] ? '<div style="margin-top:10px; color:#ff4c4c;">🔒 Steam profile is private</div>' : ''}
                     </div>
-                    ${scanState.userPrivate[username] ? '<div style="margin-top:10px; color:#ff4c4c;">🔒 Steam profile is private</div>' : ''}
-                </div>
 
-                <div style="flex: 1; min-width: 250px; display: flex; flex-direction: column; justify-content: flex-end;">
-                    <div style="text-align: center; font-size: 0.85em; font-weight: bold; margin-bottom: 30px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7;">
-                        Play Rate Trend
+                    <div style="flex: 1; min-width: 250px; display: flex; flex-direction: column; justify-content: flex-end;">
+                        <div style="text-align: center; font-size: 0.85em; font-weight: bold; margin-bottom: 30px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7;">
+                            Play Rate Trend
+                        </div>
+                        ${renderChart(stats.yearlyData)}
                     </div>
-                    ${renderChart(stats.yearlyData)}
                 </div>
-            </div>
-        `;
+            `;
+        }
 
         if (fullScan && !scanState.userPrivate[username]) {
             saveUserStatsToCache(username, stats);
             refreshAnnotations();
         }
+
         render(wins);
-        if (['all', 'group'].includes(scanState.mode)) addBackToSummaryButton();
-    }
-
-    function addBackToSummaryButton() {
-        let btn = document.getElementById('back-to-summary');
-        if (btn) return;
-
-        btn = document.createElement('button');
-        btn.id = 'back-to-summary';
-        btn.innerText = '← Back to Summary';
-        btn.style = `
-            margin-top: 10px;
-            margin-bottom: 6px;
-            padding: 4px 8px;
-            font-size: 12px;
-            background:#2a475e;
-            color:#fff;
-            border:none;
-            border-radius:4px;
-            cursor:pointer;
-        `;
-
-        btn.onclick = () => {
-            scanState.activeUser = null;
-            renderSummary(scanState.summary, scanState.membersSet);
-            status(`Summary loaded for ${scanState.summary.length} users.`);
-            btn.remove();
-        };
-
-        resultsWrap.prepend(btn);
     }
 
     /************ PERSISTENCE HELPERS ************/
@@ -3434,27 +3539,46 @@
     }
 
     function clearResults() {
-        // Remove all tables in resultsWrap
+        if (!resultsWrap) return;
+
+        // Remove tables
         resultsWrap.querySelectorAll('table').forEach(t => t.remove());
-        // Remove any dismiss buttons
-        resultsWrap.querySelectorAll('#dismiss-table, #back-to-summary, #write-csv, #flat-view').forEach(b => b.remove());
+
+        // Clean up view toggle & action buttons
+        const elementsToRemove = [
+            '#dismiss-table',
+            '#write-csv',
+            '#flat-view',
+            '#winners-view',
+            '#back-to-summary',
+            '#toggle-missing-filter',
+            '.sg-back-to-top'
+        ];
+
+        elementsToRemove.forEach(sel => {
+            resultsWrap.querySelectorAll(sel).forEach(el => el.remove());
+        });
     }
 
     /************ RENDER FLAT SUMMARY ************/
     function renderFlatView() {
-        const flatResults = getFlatResults();
+        scanState.viewMode = 'flat';
+        const rawFlatResults = getFlatResults();
         clearResults();
 
-        // Toggle Button: Switch back to Summary
-        const winnersBtn = document.createElement('button');
-        winnersBtn.id = 'winners-view';
-        winnersBtn.innerText = 'Winners View';
-        winnersBtn.style = `float:left; margin-bottom:5px; padding:2px 6px; font-size:12px; background:#2a475e; color:#fff; border:none; border-radius:3px; cursor:pointer;`;
-        winnersBtn.onclick = () => {
-            scanState.viewMode = 'summary';
-            renderSummary(Object.entries(scanState.userMap).map(([u, w]) => ({ username: u, ...computeUserStats(w) })));
-        };
-        resultsWrap.appendChild(winnersBtn);
+        // Prevent duplicate "Winners View" buttons
+        if (!resultsWrap.querySelector('#winners-view')) {
+            const winnersBtn = document.createElement('button');
+            winnersBtn.id = 'winners-view';
+            winnersBtn.innerText = 'Winners View';
+            winnersBtn.style = `float:left; margin-bottom:5px; padding:2px 6px; font-size:12px; background:#2a475e; color:#fff; border:none; border-radius:3px; cursor:pointer;`;
+            winnersBtn.onclick = () => {
+                scanState.viewMode = 'summary';
+                scanState.showMissingOnly = false;
+                renderSummary(scanState.summary, scanState.membersSet);
+            };
+            resultsWrap.appendChild(winnersBtn);
+        }
 
         const dismissBtn = document.createElement('button');
         dismissBtn.id = 'dismiss-table';
@@ -3472,39 +3596,43 @@
             cursor:pointer;
         `;
         dismissBtn.onclick = () => {
-            resultsWrap.querySelector('table')?.remove();
-            dismissBtn.remove();
-            winnersBtn.remove();
-            csvBtn.remove();
-            status('');
+            clearResults();
+            if (typeof status === 'function') status('');
         };
         resultsWrap.appendChild(dismissBtn);
 
         const csvBtn = document.createElement('button');
-            csvBtn.id = 'write-csv';
-            csvBtn.innerText = 'CSV';
-            csvBtn.title = 'Export table to CSV';
-            csvBtn.style = `
-                float: right;
-                margin-bottom: 5px;
-                margin-right: 5px;
-                padding: 2px 6px;
-                font-size: 12px;
-                background:#2a475e;
-                color:#fff;
-                border:none;
-                border-radius:3px;
-                cursor:pointer;
-            `;
+        csvBtn.id = 'write-csv';
+        csvBtn.innerText = 'CSV';
+        csvBtn.title = 'Export table to CSV';
+        csvBtn.style = `
+            float: right;
+            margin-bottom: 5px;
+            margin-right: 5px;
+            padding: 2px 6px;
+            font-size: 12px;
+            background:#2a475e;
+            color:#fff;
+            border:none;
+            border-radius:3px;
+            cursor:pointer;
+        `;
 
-            csvBtn.onclick = async () => {
-                const table = document.getElementById('sg-flat-table');
-                if (table) {
-                    exportTableToCSV(table, `steamgifts-giveaways-${new Date().toISOString().slice(0,10)}.csv`);
-                }
-            };
+        csvBtn.onclick = async () => {
+            const table = document.getElementById('sg-flat-table');
+            if (table) {
+                exportTableToCSV(table, `steamgifts-giveaways-${new Date().toISOString().slice(0,10)}`);
+            }
+        };
 
         resultsWrap.appendChild(csvBtn);
+
+        // Add private/missing filter toggle
+        renderMissingToggleBtn(rawFlatResults, resultsWrap);
+
+        const flatResults = scanState.showMissingOnly
+            ? rawFlatResults.filter(r => r.isMissing)
+            : rawFlatResults;
 
         resultsWrap.style.maxHeight = '70vh';
         resultsWrap.style.overflowY = 'auto';
@@ -3534,7 +3662,7 @@
         const tbody = document.createElement('tbody');
         flatResults.forEach(r => {
             const tr = document.createElement('tr');
-            //if (r.wlonly && highlightWLON) tr.style.backgroundColor = '#0d5c94';
+            const isMissingGame = r.isMissing;
 
             // 1. Game Name
             const tdName = document.createElement('td');
@@ -3543,11 +3671,12 @@
                 const a = document.createElement('a');
                 a.href = r.url; a.target = '_blank'; a.style = 'color:#66c0f4; text-decoration:none;';
                 a.innerText = r.name;
-                if (r.wlonly && highlightWLON) a.innerText = r.name + ' 💙';
+                if (r.wlonly && typeof highlightWLON !== 'undefined' && highlightWLON) a.innerText = r.name + ' 💙';
                 tdName.appendChild(a);
             } else {
                 tdName.innerText = r.name + ' 🔒'; tdName.style.color = '#888';
             }
+            if (isMissingGame) tdName.innerText = r.name + ' ⛔';
             tr.appendChild(tdName);
 
             // 2. Date
@@ -3557,7 +3686,7 @@
             tdDate.dataset.value = r.ts ?? -1;
             tr.appendChild(tdDate);
 
-            // 3. Winner (The New Column)
+            // 3. Winner
             const tdWinner = document.createElement('td');
             tdWinner.style = 'padding: 6px; border:1px solid #444; overflow: hidden; text-overflow: ellipsis; text-align: left;';
             const aWin = document.createElement('a');
@@ -3570,7 +3699,12 @@
             // 4. Achievements
             const tdAch = document.createElement('td');
             tdAch.style = 'padding: 6px; border:1px solid #444;';
-            if (r.ach && r.ach.includes('/') && r.app) {
+            if (isMissingGame && r.ach) {
+                tdAch.innerText = `${r.ach}`;
+                tdAch.title = 'Game not found in Steam library (private or revoked)';
+                tdAch.style.color = '#e01e6d';
+                tdAch.dataset.value = 0;
+            } else if (r.ach && r.ach.includes('/') && r.app) {
                 const [done, total] = r.ach.split('/').map(Number);
                 const a = document.createElement('a');
                 a.href = `https://steamcommunity.com/profiles/${r.steamid}/stats/${r.app}/achievements`;
@@ -3610,13 +3744,13 @@
 
     /************ RENDER SUMMARY ************/
     function renderSummary(summary, membersSet = new Set()) {
-        // Remove any visible table first
-        resultsWrap.querySelector('table')?.remove();
-        resultsWrap.querySelector('#dismiss-table')?.remove();
-        resultsWrap.querySelector('#write-csv')?.remove();
-        resultsWrap.querySelector('#flat-view')?.remove();
-        resultsWrap.querySelector('#winners-view')?.remove();
-        resultsWrap.querySelector('#back-to-summary')?.remove();
+        scanState.viewMode = 'summary';
+        scanState.activeUser = null;
+        scanState.showMissingOnly = false; // Reset missing toggle filter on summary view
+
+        // Clear existing header elements including missing filter toggle
+        clearResults();
+        resultsWrap.querySelector('#toggle-missing-filter')?.remove();
 
         const dismissBtn = document.createElement('button');
         dismissBtn.id = 'dismiss-table';
@@ -3634,37 +3768,34 @@
             cursor:pointer;
         `;
         dismissBtn.onclick = () => {
-            resultsWrap.querySelector('table')?.remove();
-            dismissBtn.remove();
-            csvBtn.remove();
-            flatViewBtn.remove();
-            status('');
+            clearResults();
+            if (typeof status === 'function') status('');
         };
         resultsWrap.appendChild(dismissBtn);
 
         const csvBtn = document.createElement('button');
-            csvBtn.id = 'write-csv';
-            csvBtn.innerText = 'CSV';
-            csvBtn.title = 'Export table to CSV';
-            csvBtn.style = `
-                float: right;
-                margin-bottom: 5px;
-                margin-right: 5px;
-                padding: 2px 6px;
-                font-size: 12px;
-                background:#2a475e;
-                color:#fff;
-                border:none;
-                border-radius:3px;
-                cursor:pointer;
-            `;
+        csvBtn.id = 'write-csv';
+        csvBtn.innerText = 'CSV';
+        csvBtn.title = 'Export table to CSV';
+        csvBtn.style = `
+            float: right;
+            margin-bottom: 5px;
+            margin-right: 5px;
+            padding: 2px 6px;
+            font-size: 12px;
+            background:#2a475e;
+            color:#fff;
+            border:none;
+            border-radius:3px;
+            cursor:pointer;
+        `;
 
-            csvBtn.onclick = async () => {
-                const table = document.getElementById('sg-summary-table');
-                if (table) {
-                    exportTableToCSV(table, `steamgifts-summary-${new Date().toISOString().slice(0,10)}.csv`);
-                }
-            };
+        csvBtn.onclick = async () => {
+            const table = document.getElementById('sg-summary-table');
+            if (table) {
+                exportTableToCSV(table, `steamgifts-summary-${new Date().toISOString().slice(0,10)}`);
+            }
+        };
 
         resultsWrap.appendChild(csvBtn);
 
@@ -3672,14 +3803,13 @@
         resultsWrap.style.overflowY = 'auto';
 
         const flatViewBtn = document.createElement('button');
-            flatViewBtn.id = 'flat-view';
-            flatViewBtn.innerText = 'Giveaways View';
-            flatViewBtn.title = 'Show a list of all games won';
-            flatViewBtn.style = `float: left; margin-bottom: 5px; margin-right: 5px; padding: 2px 6px; font-size: 12px; background:#2a475e; color:#fff; border:none; border-radius:3px; cursor:pointer;`;
-            flatViewBtn.onclick = () => {
-                scanState.viewMode = 'flat';
-                renderFlatView();
-            };
+        flatViewBtn.id = 'flat-view';
+        flatViewBtn.innerText = 'Giveaways View';
+        flatViewBtn.title = 'Show a list of all games won';
+        flatViewBtn.style = `float: left; margin-bottom: 5px; margin-right: 5px; padding: 2px 6px; font-size: 12px; background:#2a475e; color:#fff; border:none; border-radius:3px; cursor:pointer;`;
+        flatViewBtn.onclick = () => {
+            renderFlatView();
+        };
         resultsWrap.appendChild(flatViewBtn);
 
         // 1. CALCULATE GLOBAL TOTALS
@@ -3690,10 +3820,10 @@
             twentyFive: 0,
             hundred: 0,
             hours: 0,
-            anyHoursWins: 0,  // For Option 2 (Wins with >0h)
-            usersWithPlaytime: 0, // For Option 1 (Users with >0h)
-            unlocked: 0, // for weighted Avg %
-            available: 0 // for weighted Avg %
+            anyHoursWins: 0,
+            usersWithPlaytime: 0,
+            unlocked: 0,
+            available: 0
         };
 
         summary.forEach(u => {
@@ -3703,135 +3833,131 @@
             totals.twentyFive += u.games25Completion || 0;
             totals.hundred += u.games100Completion || 0;
             totals.hours += u.totalHours || 0;
-            totals.anyHoursWins += u.anyHours || 0; // Number of games this user played
+            totals.anyHoursWins += u.anyHours || 0;
             if (u.totalHours > 0) totals.usersWithPlaytime++;
             totals.unlocked += (u.totalUnlocked || 0);
             totals.available += (u.totalAvailable || 0);
         });
 
-        const userCount = summary.length || 1;
         const avg = {
             pctAny: totals.eligible ? (Math.round((totals.any / totals.eligible) * 1000) / 10) : 0,
             pct25: totals.eligible ? (Math.round((totals.twentyFive / totals.eligible) * 1000) / 10) : 0,
             pct100: totals.eligible ? (Math.round((totals.hundred / totals.eligible) * 1000) / 10) : 0,
             pctComp: totals.available ? (Math.round((totals.unlocked / totals.available) * 1000) / 10) : 0,
-            //perTotalWin: totals.wins ? (totals.hours / totals.wins) : 0, // Total Hours / All Wins
-            perPlayedWin: totals.anyHoursWins ? (totals.hours / totals.anyHoursWins) : 0 // Total Hours / Wins with >0h
+            perPlayedWin: totals.anyHoursWins ? (totals.hours / totals.anyHoursWins) : 0
         };
 
         const table = document.createElement('table');
         table.id = 'sg-summary-table';
 
         const colgroup = document.createElement('colgroup');
-            colgroup.innerHTML = `
-                <col style="width: 21%">
-                <col style="width: 10%">
-                <col style="width: 15%">
-                <col style="width: 15%">
-                <col style="width: 15%">
-                <col style="width: 12%">
-                <col style="width: 12%">
-            `;
-            table.appendChild(colgroup);
+        colgroup.innerHTML = `
+            <col style="width: 21%">
+            <col style="width: 10%">
+            <col style="width: 15%">
+            <col style="width: 15%">
+            <col style="width: 15%">
+            <col style="width: 12%">
+            <col style="width: 12%">
+        `;
+        table.appendChild(colgroup);
 
-            const headers = ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
-            const thead = document.createElement('thead');
+        const headers = ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
+        const thead = document.createElement('thead');
 
-            // --- New Average Row ---
-            const trAvg = document.createElement('tr');
-            trAvg.className = 'sticky-avg';
-            trAvg.innerHTML = `
-                <td>GLOBAL SUMMARY</td>
-                <td>${totals.wins}</td>
-                <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
-                <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
-                <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
-                <td>${avg.pctComp}%</td>
-                <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
-            `;
-            thead.appendChild(trAvg);
+        // New Average Row
+        const trAvg = document.createElement('tr');
+        trAvg.className = 'sticky-avg';
+        trAvg.innerHTML = `
+            <td>GLOBAL SUMMARY</td>
+            <td>${totals.wins}</td>
+            <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
+            <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
+            <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
+            <td>${avg.pctComp}%</td>
+            <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
+        `;
+        thead.appendChild(trAvg);
 
-            const avgHeight = trAvg.offsetHeight || 30; // Fallback to 30 if not yet rendered
+        const avgHeight = trAvg.offsetHeight || 30;
 
-            const trHead = document.createElement('tr');
-            trHead.className = 'sticky-header';
-            headers.forEach((h, i) => {
-                const th = document.createElement('th');
-                th.innerHTML = h;
-                th.style.top = `${avgHeight}px`; // Dynamic offset
-                th.onclick = () => sortTable(table, i);
-                trHead.appendChild(th);
-            });
+        const trHead = document.createElement('tr');
+        trHead.className = 'sticky-header';
+        headers.forEach((h, i) => {
+            const th = document.createElement('th');
+            th.innerHTML = h;
+            th.style.top = `${avgHeight}px`;
+            th.onclick = () => sortTable(table, i);
+            trHead.appendChild(th);
+        });
 
-            thead.appendChild(trHead);
-            table.appendChild(thead);
+        thead.appendChild(trHead);
+        table.appendChild(thead);
 
-            const tbody = document.createElement('tbody');
+        const tbody = document.createElement('tbody');
 
-            const cols = ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct100Completion', 'compPct', 'totalHours'];
+        const cols = ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct100Completion', 'compPct', 'totalHours'];
 
-            summary.forEach(u => {
-                const tr = document.createElement('tr');
+        summary.forEach(u => {
+            const tr = document.createElement('tr');
 
-                // User Column
-                const tdUser = document.createElement('td');
-                const a = document.createElement('a');
-                a.href = '#';
-                a.onclick = (e) => { e.preventDefault(); showUserDetail(u.username); };
-                a.innerText = scanState.userDisplay[u.username] ?? u.username;
-                tdUser.appendChild(a);
-                tr.appendChild(tdUser);
+            // User Column
+            const tdUser = document.createElement('td');
+            const a = document.createElement('a');
+            a.href = '#';
+            a.onclick = (e) => { e.preventDefault(); showUserDetail(u.username); };
+            a.innerText = scanState.userDisplay[u.username] ?? u.username;
+            tdUser.appendChild(a);
+            tr.appendChild(tdUser);
 
-                // Data Columns
-                cols.forEach((c) => {
-                    const td = document.createElement('td');
+            // Data Columns
+            cols.forEach((c) => {
+                const td = document.createElement('td');
 
-                    const isPrivate = !!scanState.userPrivate[u.username];
-                    const isWinCol = c === 'gamesWon';
-                    const hasEligibleGames = u.eligible > 0; // Check if there's data to calculate
+                const isPrivateUser = !!scanState.userPrivate[u.username];
+                const isWinCol = c === 'gamesWon';
+                const hasEligibleGames = u.eligible > 0;
 
-                    // Set sorting value
-                    td.dataset.value = (isPrivate && !isWinCol) ? -1 : (u[c] ?? -1);
+                td.dataset.value = (isPrivateUser && !isWinCol) ? -1 : (u[c] ?? -1);
 
-                    let display = (isPrivate && !isWinCol) ? '🔒' : (u[c] ?? 0);
+                let display = (isPrivateUser && !isWinCol) ? '🔒' : (u[c] ?? 0);
 
-                    if (!isPrivate || isWinCol) {
-                        if (c === 'totalHours') {
-                            display = Number(display).toFixed(1);
-                        }
-                        else if (c === 'pctAnyCompletion') {
-                            // If no eligible games, show N/A
-                            const val = hasEligibleGames ? `${u.pctAnyCompletion}%` : 'N/A';
-                            display = `${val} <small style="opacity:0.7">(${u.gamesAnyCompletion}/${u.eligible})</small>`;
-                        }
-                        else if (c === 'pct25Completion') {
-                            const val = hasEligibleGames ? `${u.pct25Completion}%` : 'N/A';
-                            display = `${val} <small style="opacity:0.7">(${u.games25Completion}/${u.eligible})</small>`;
-                        }
-                        else if (c === 'pct100Completion') {
-                            const val = hasEligibleGames ? `${u.pct100Completion}%` : 'N/A';
-                            display = `${val} <small style="opacity:0.7">(${u.games100Completion}/${u.eligible})</small>`;
-                        }
-                        else if (c === 'compPct') {
-                            display = hasEligibleGames ? `${display}%` : 'N/A';
-                        }
+                if (!isPrivateUser || isWinCol) {
+                    if (c === 'totalHours') {
+                        display = Number(display).toFixed(1);
                     }
+                    else if (c === 'pctAnyCompletion') {
+                        const val = hasEligibleGames ? `${u.pctAnyCompletion}%` : 'N/A';
+                        display = `${val} <small style="opacity:0.7">(${u.gamesAnyCompletion}/${u.eligible})</small>`;
+                    }
+                    else if (c === 'pct25Completion') {
+                        const val = hasEligibleGames ? `${u.pct25Completion}%` : 'N/A';
+                        display = `${val} <small style="opacity:0.7">(${u.games25Completion}/${u.eligible})</small>`;
+                    }
+                    else if (c === 'pct100Completion') {
+                        const val = hasEligibleGames ? `${u.pct100Completion}%` : 'N/A';
+                        display = `${val} <small style="opacity:0.7">(${u.games100Completion}/${u.eligible})</small>`;
+                    }
+                    else if (c === 'compPct') {
+                        display = hasEligibleGames ? `${display}%` : 'N/A';
+                    }
+                }
 
-                    td.innerHTML = display;
-                    tr.appendChild(td);
-                });
-
-                tbody.appendChild(tr);
+                td.innerHTML = display;
+                tr.appendChild(td);
             });
-            table.appendChild(tbody);
-            resultsWrap.appendChild(table);
 
-            attachBackToTop(resultsWrap);
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        resultsWrap.appendChild(table);
 
-            if (summarySort.col !== null) {
-                sortTable(table, summarySort.col, summarySort.asc);
-            }
-            saveScanState();
+        attachBackToTop(resultsWrap);
+
+        if (typeof summarySort !== 'undefined' && summarySort.col !== null) {
+            sortTable(table, summarySort.col, summarySort.asc);
+        }
+        if (typeof saveScanState === 'function') saveScanState();
     }
 
     /***********************
@@ -4167,47 +4293,88 @@
         return val;
     }
 
+    // Helper: Batch fetch achievement totals from ESGST
+    async function fetchEsgstAchievements(appIds) {
+        if (!appIds || appIds.length === 0) return {};
+
+        const url = `https://esgst.rafaelgomes.xyz/api/games?app_ids=${appIds.join(',')}`;
+
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            const results = {};
+
+            const apps = data?.result?.found?.apps;
+
+            if (apps && typeof apps === 'object') {
+                for (const [appId, details] of Object.entries(apps)) {
+                    results[appId] = details?.achievements ?? 0;
+                }
+            }
+
+            return results;
+
+        } catch (err) {
+            console.warn('Failed to fetch ESGST achievement metadata:', err);
+            return {};
+        }
+    }
+
     async function getSubPlaytime(steamid, subid, useSteamCache) {
         const apps = await getSubAppsCached(subid);
         const result = await getOwnedGamesCachedIDB(steamid, useSteamCache);
 
-        let total = 0;
-
         const steamGamesMap = result.apps || {};
+        let total = 0;
+        let ownedCount = 0;
 
         for (const appid of apps) {
-            const time = Number(steamGamesMap[appid]) || 0;
-            total += time;
+            if (steamGamesMap[appid] !== undefined) {
+                ownedCount++;
+                total += Number(steamGamesMap[appid]) || 0;
+            }
         }
-        return total;
+
+        // Returns an object containing both total minutes and missing state
+        return {
+            hours: total,
+            isMissing: apps.length > 0 && ownedCount === 0 // All constituent apps are missing
+        };
     }
 
-    async function getSubAchievements(steamid, subid, useSteamCache) {
-    const apps = await getSubAppsCached(subid);
-    let done = 0;
-    let total = 0;
+    async function getSubAchievements(steamid, subid, useSteamCache, isMissing = false) {
+        const apps = await getSubAppsCached(subid);
+        let done = 0;
+        let total = 0;
 
-    for (const appid of apps) {
-        const val = await getAchievementsCachedIDB(steamid, appid, useSteamCache);
-
-        // 1. Strict Guard: Must be a string AND contain a slash
-        if (typeof val !== 'string' || !val.includes('/')) {
-            continue;
+        // If all apps in sub package are missing/private, query ESGST for achievement totals
+        if (isMissing) {
+            const esgstMap = await fetchEsgstAchievements(apps);
+            for (const appid of apps) {
+                total += esgstMap[appid] || 0;
+            }
+            return total > 0 ? `0/${total}` : 'N/A';
         }
 
-        const parts = val.split('/').map(Number);
+        // Standard API lookup for owned sub apps
+        for (const appid of apps) {
+            const val = await getAchievementsCachedIDB(steamid, appid, useSteamCache);
 
-        // 2. NaN Check: Ensure map(Number) actually produced numbers
-        if (isNaN(parts[0]) || isNaN(parts[1])) {
-            continue;
+            if (typeof val !== 'string' || !val.includes('/')) {
+                continue;
+            }
+
+            const parts = val.split('/').map(Number);
+            if (isNaN(parts[0]) || isNaN(parts[1])) {
+                continue;
+            }
+
+            done += parts[0];
+            total += parts[1];
         }
 
-        done += parts[0];
-        total += parts[1];
+        return total > 0 ? `${done}/${total}` : 'N/A';
     }
-
-    return total > 0 ? `${done}/${total}` : 'N/A';
-}
 
     /************ TABLE ************/
     function sortTable(table, colIndex, forceAsc = null) {
@@ -4260,12 +4427,12 @@
         }
     }
 
-    function attachBackToTop(container) {
+function attachBackToTop(container) {
         const existing = container.querySelector('.sg-back-to-top');
         if (existing) existing.remove();
 
         const btn = document.createElement('div');
-        btn.className = 'sg-back-to-top'; // Changed to class
+        btn.className = 'sg-back-to-top';
         btn.innerHTML = '︿';
 
         container.onscroll = () => {
@@ -4279,8 +4446,96 @@
         container.appendChild(btn);
     }
 
+    function getMissingGameCount(results) {
+        if (!Array.isArray(results)) return 0;
+        return results.filter(r => r.isMissing).length;
+    }
+
+    function renderMissingToggleBtn(results, parentEl) {
+        parentEl.querySelector('#toggle-missing-filter')?.remove();
+
+        const missingCount = getMissingGameCount(results);
+        if (missingCount === 0) return;
+
+        const btn = document.createElement('button');
+        btn.id = 'toggle-missing-filter';
+
+        btn.innerText = scanState.showMissingOnly
+            ? `✖ Showing ${missingCount} Private/Missing`
+            : `⛔ ${missingCount} Private/Missing`;
+
+        btn.title = scanState.showMissingOnly
+            ? 'Click to show all games'
+            : 'Click to filter and show only private/missing games';
+
+        btn.style = `
+            float: right;
+            margin-bottom: 5px;
+            margin-right: 5px;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-weight: bold;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            background: ${scanState.showMissingOnly ? '#ff4c4c' : '#e0a96d'};
+            color: ${scanState.showMissingOnly ? '#ffffff' : '#1b2838'};
+        `;
+
+        btn.onclick = () => {
+            scanState.showMissingOnly = !scanState.showMissingOnly;
+
+            if (scanState.viewMode === 'flat') {
+                renderFlatView();
+            } else if (scanState.activeUser) {
+                render(scanState.userMap[scanState.activeUser]);
+            } else {
+                render(results);
+            }
+        };
+
+        parentEl.appendChild(btn);
+    }
+
+    function addBackToSummaryButton() {
+        let btn = document.getElementById('back-to-summary');
+        if (btn) return;
+
+        btn = document.createElement('button');
+        btn.id = 'back-to-summary';
+        btn.innerText = '← Back to Summary';
+        btn.style = `
+            float: left;
+            margin-top: 0;
+            margin-bottom: 5px;
+            padding: 2px 6px;
+            font-size: 12px;
+            background: #2a475e;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        `;
+
+        btn.onclick = () => {
+            scanState.activeUser = null;
+            scanState.showMissingOnly = false; // Reset filter state
+            renderSummary(scanState.summary, scanState.membersSet);
+            if (typeof status === 'function') {
+                status(`Summary loaded for ${scanState.summary.length} users.`);
+            }
+        };
+
+        resultsWrap.prepend(btn);
+    }
+
     function render(results) {
         clearResults();
+
+        // Check and restore Back to Summary button if viewing user details
+        if (scanState.activeUser && ['all', 'group'].includes(scanState.mode)) {
+            addBackToSummaryButton();
+        }
 
         const dismissBtn = document.createElement('button');
         dismissBtn.id = 'dismiss-table';
@@ -4299,46 +4554,52 @@
         `;
         dismissBtn.onclick = () => {
             panel.querySelector('table')?.remove();
-            dismissBtn.remove();
-            csvBtn.remove();
-            csvBtn.remove();
-            status('');
+            clearResults();
+            if (typeof status === 'function') status('');
         };
         resultsWrap.appendChild(dismissBtn);
 
         const csvBtn = document.createElement('button');
-            csvBtn.id = 'write-csv';
-            csvBtn.innerText = 'CSV';
-            csvBtn.title = 'Export table to CSV';
-            csvBtn.style = `
-                float: right;
-                margin-bottom: 5px;
-                margin-right: 5px;
-                padding: 2px 6px;
-                font-size: 12px;
-                background:#2a475e;
-                color:#fff;
-                border:none;
-                border-radius:3px;
-                cursor:pointer;
-            `;
+        csvBtn.id = 'write-csv';
+        csvBtn.innerText = 'CSV';
+        csvBtn.title = 'Export table to CSV';
+        csvBtn.style = `
+            float: right;
+            margin-bottom: 5px;
+            margin-right: 5px;
+            padding: 2px 6px;
+            font-size: 12px;
+            background:#2a475e;
+            color:#fff;
+            border:none;
+            border-radius:3px;
+            cursor:pointer;
+        `;
 
-            csvBtn.onclick = async () => {
-                const table = document.getElementById('sg-user-table');
-                if (table) {
-                    exportTableToCSV(table, `steamgifts-user-${new Date().toISOString().slice(0,10)}.csv`);
-                }
-            };
+        csvBtn.onclick = async () => {
+            const table = document.getElementById('sg-user-table');
+            if (table) {
+                exportTableToCSV(table, `steamgifts-user-${new Date().toISOString().slice(0,10)}`);
+            }
+        };
 
         resultsWrap.appendChild(csvBtn);
 
         resultsWrap.style.maxHeight = '70vh';
         resultsWrap.style.overflowY = 'auto';
 
+        // Render missing toggle button for single user / detailed view
+        renderMissingToggleBtn(results, resultsWrap);
+
+        // Filter results if toggle is active
+        const displayResults = scanState.showMissingOnly
+            ? results.filter(r => r.isMissing)
+            : results;
+
         const table = document.createElement('table');
         table.style = `
             width: 100%;
-            margin-top: 10px;
+            margin-top: 5px;
             border-collapse: collapse;
             table-layout: fixed;
             text-align: center;
@@ -4348,7 +4609,6 @@
         table.id = 'sg-user-table';
 
         const colgroup = document.createElement('colgroup');
-
         colgroup.innerHTML = `
             <col style="width: 45%">  <!-- Game -->
             <col style="width: 15%">  <!-- Date -->
@@ -4356,12 +4616,10 @@
             <col style="width: 15%">  <!-- Completion % -->
             <col style="width: 10%">  <!-- Hours -->
         `;
-
         table.appendChild(colgroup);
 
         table.classList.add('sg-user-table');
 
-        // Column headers
         const headers = ['Game', 'Date', 'Achievements', 'Completion %', 'Hours'];
         const thead = document.createElement('thead');
         const trHead = document.createElement('tr');
@@ -4375,46 +4633,53 @@
         thead.appendChild(trHead);
         table.appendChild(thead);
 
-        // Table body
         const tbody = document.createElement('tbody');
-        results.forEach(r => {
+        displayResults.forEach(r => {
             const tr = document.createElement('tr');
+            const isMissingGame = r.isMissing;
 
-            // Game name (wider, nowrap with ellipsis if too long)
+            // Game name
             const tdName = document.createElement('td');
             tdName.className = 'col-game';
-            tdName.style = 'padding: 6px; border:1px solid #444; text-align: left;';
+            tdName.style = 'padding: 6px; border:1px solid #444; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
 
             if (r.url) {
-                // If URL exists, create a link
                 const a = document.createElement('a');
                 a.href = r.url;
                 a.target = '_blank';
                 a.style = 'color:#66c0f4; text-decoration:none;';
-                a.innerText = r.name;
-                if (r.wlonly && highlightWLON) a.innerText = r.name + ' 💙';
+
+                let displayName = r.name;
+                if (r.wlonly && typeof highlightWLON !== 'undefined' && highlightWLON) displayName += ' 💙';
+
+                a.innerText = displayName;
                 tdName.appendChild(a);
             } else {
                 tdName.innerText = r.name + ' 🔒';
                 tdName.style.color = '#888';
             }
+            if (isMissingGame) tdName.innerText = r.name + ' ⛔';
 
             tr.appendChild(tdName);
 
-            // Date (convert timestamp to MM/DD/YYYY)
+            // Date
             const tdDate = document.createElement('td');
             tdDate.style = 'padding: 6px; border:1px solid #444;';
             tdDate.innerText = formatDateFromTimestamp(r.ts);
-            tdDate.dataset.value = r.ts ?? -1; // 👈 numeric sort value
+            tdDate.dataset.value = r.ts ?? -1;
             tr.appendChild(tdDate);
 
             // Achievements
             const tdAch = document.createElement('td');
             tdAch.style = 'padding: 6px; border:1px solid #444;';
 
-            if (r.ach && r.ach.includes('/') && r.app) {
+            if (isMissingGame && r.ach && r.ach !== "N/A") {
+                tdAch.innerText = `${r.ach}`;
+                tdAch.title = 'Game not found in Steam library';
+                tdAch.style.color = '#e01e6d';
+                tdAch.dataset.value = 0;
+            } else if (r.ach && r.ach.includes('/') && r.app) {
                 const [done, total] = r.ach.split('/').map(Number);
-
                 const a = document.createElement('a');
                 a.href = `https://steamcommunity.com/profiles/${r.steamid}/stats/${r.app}/achievements`;
                 a.target = '_blank';
@@ -4422,7 +4687,7 @@
                 a.innerText = r.ach;
 
                 tdAch.appendChild(a);
-                tdAch.dataset.value = done / total;
+                tdAch.dataset.value = total > 0 ? done / total : 0;
             } else {
                 tdAch.innerText = r.ach || 'N/A';
                 tdAch.dataset.value = -1;
@@ -4443,21 +4708,17 @@
             }
             tr.appendChild(tdComp);
 
-            // Hours (convert from minutes to hours, 1 decimal)
+            // Hours
             const tdHours = document.createElement('td');
             tdHours.style = 'padding: 6px; border:1px solid #444;';
             const hours = r.hours !== undefined ? Number(r.hours)/60 : 0;
-            tdHours.innerText = hours.toFixed(1);   // display 1 decimal
-            tdHours.dataset.value = hours;          // numeric value in hours for sorting
+            tdHours.innerText = hours.toFixed(1);
+            tdHours.dataset.value = hours;
             tr.appendChild(tdHours);
-
-            // Highlight whitelist only giveaways
-            //if (r.wlonly && highlightWLON) tr.style.backgroundColor = '#0d5c94';
 
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
-
         resultsWrap.appendChild(table);
 
         attachBackToTop(resultsWrap);
@@ -4770,21 +5031,35 @@
                 userWins.forEach(w => w.steamid = steamid);
 
                 let steamGamesMap = {};
-                let isPrivate = false;
+                let isPrivateUser = false;
 
                 const res = await getOwnedGamesCachedIDB(steamid, useSteamCache);
                 steamGamesMap = res.apps;
-                isPrivate = !!res.private;
+                isPrivateUser = !!res.private;
 
-                scanState.userPrivate[user] = isPrivate;
+                scanState.userPrivate[user] = isPrivateUser;
 
-                if (isPrivate) {
+                if (isPrivateUser) {
                     userWins.forEach(w => {
                         w.hours = null;
                         w.ach = null;
+                        w.isMissing = false;
                     });
                     continue; // skip Steam processing for this user
                 }
+
+                // 1. Identify missing app wins prior to parallel worker execution
+                const missingAppWins = userWins.filter(w => !w.isSub && w.app && steamGamesMap[w.app] === undefined);
+                const missingAppIds = [...new Set(missingAppWins.map(w => w.app))];
+
+                // 2. Fetch total achievements count from ESGST for all missing games in one batch request
+                const esgstAchMap = await fetchEsgstAchievements(missingAppIds);
+
+                missingAppWins.forEach(w => {
+                    const totalAch = esgstAchMap[w.app] || 0;
+                    w.ach = `0/${totalAch}`;
+                    w.hours = 0;
+                });
 
                 initSteamProgress(userWins.length);
                 let done = 0;
@@ -4793,18 +5068,34 @@
                 async function processWin(w) {
                     if (w.isSub && w.sub) {
                         try {
-                            w.hours = await getSubPlaytime(steamid, w.sub, useSteamCache);
-                            w.ach = await getSubAchievements(steamid, w.sub, useSteamCache);
+                            const subData = await getSubPlaytime(steamid, w.sub, useSteamCache);
+                            w.hours = subData.hours;
+                            w.isMissing = subData.isMissing;
+                            w.ach = await getSubAchievements(steamid, w.sub, useSteamCache, w.isMissing);
+                            console.log (`sub name : ${w.name}, sub missing: ${w.isMissing}, sub ach: ${w.ach}`);
                         } catch {
                             w.hours = 0;
+                            w.isMissing = true;
                             w.ach = 'N/A';
                         }
                     } else {
-                        w.hours = steamGamesMap[w.app] ?? 0;
-                        try {
-                            w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache);
-                        } catch {
-                            w.ach = 'N/A';
+                        const isOwned = steamGamesMap[w.app] !== undefined;
+
+                        if (isOwned) {
+                            w.isMissing = false;
+                            w.hours = steamGamesMap[w.app] ?? 0;
+                            try {
+                                w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache);
+                            } catch {
+                                w.ach = 'N/A';
+                            }
+                        } else {
+                            // Missing/Hidden Standalone Game
+                            w.isMissing = true;
+                            w.hours = 0;
+
+                            const totalAch = esgstAchMap[w.app] || 0;
+                            w.ach = totalAch > 0 ? `0/${totalAch}` : 'N/A';
                         }
                     }
 
