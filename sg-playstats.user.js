@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.1
+// @version      1.10.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -3667,16 +3667,28 @@
             // 1. Game Name
             const tdName = document.createElement('td');
             tdName.style = 'padding: 6px; border:1px solid #444; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+
+            // Build any icon suffixes
+            let iconSuffix = '';
+            if (r.wlonly && typeof highlightWLON !== 'undefined' && highlightWLON) {
+                iconSuffix += ' 💙';
+            }
+            if (isMissingGame) {
+                iconSuffix += ' ⛔';
+            }
+
             if (r.url) {
                 const a = document.createElement('a');
-                a.href = r.url; a.target = '_blank'; a.style = 'color:#66c0f4; text-decoration:none;';
-                a.innerText = r.name;
-                if (r.wlonly && typeof highlightWLON !== 'undefined' && highlightWLON) a.innerText = r.name + ' 💙';
+                a.href = r.url;
+                a.target = '_blank';
+                a.style = 'color:#66c0f4; text-decoration:none;';
+                a.innerText = r.name + iconSuffix;
                 tdName.appendChild(a);
             } else {
-                tdName.innerText = r.name + ' 🔒'; tdName.style.color = '#888';
+                tdName.innerText = r.name + ' 🔒' + iconSuffix;
+                tdName.style.color = '#888';
             }
-            if (isMissingGame) tdName.innerText = r.name + ' ⛔';
+
             tr.appendChild(tdName);
 
             // 2. Date
@@ -4638,27 +4650,30 @@ function attachBackToTop(container) {
             const tr = document.createElement('tr');
             const isMissingGame = r.isMissing;
 
-            // Game name
+            // Game Name
             const tdName = document.createElement('td');
-            tdName.className = 'col-game';
             tdName.style = 'padding: 6px; border:1px solid #444; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+
+            // Build any icon suffixes
+            let iconSuffix = '';
+            if (r.wlonly && typeof highlightWLON !== 'undefined' && highlightWLON) {
+                iconSuffix += ' 💙';
+            }
+            if (isMissingGame) {
+                iconSuffix += ' ⛔';
+            }
 
             if (r.url) {
                 const a = document.createElement('a');
                 a.href = r.url;
                 a.target = '_blank';
                 a.style = 'color:#66c0f4; text-decoration:none;';
-
-                let displayName = r.name;
-                if (r.wlonly && typeof highlightWLON !== 'undefined' && highlightWLON) displayName += ' 💙';
-
-                a.innerText = displayName;
+                a.innerText = r.name + iconSuffix;
                 tdName.appendChild(a);
             } else {
-                tdName.innerText = r.name + ' 🔒';
+                tdName.innerText = r.name + ' 🔒' + iconSuffix;
                 tdName.style.color = '#888';
             }
-            if (isMissingGame) tdName.innerText = r.name + ' ⛔';
 
             tr.appendChild(tdName);
 
