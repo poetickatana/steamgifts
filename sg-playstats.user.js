@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.2
+// @version      1.10.3
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -2554,6 +2554,7 @@
 
         let totalUnlocked = 0;
         let totalAvailable = 0;
+        let sumCompletionPct = 0; // Cumulative sum of individual game percentages
 
         let totalHours = 0;
         let anyHours = 0;
@@ -2585,6 +2586,7 @@
             if (pct > 0) {
                 gamesAnyCompletion++;
                 yearlyData[winYear].any_completion++; // Track for the chart
+                sumCompletionPct += pct; // Add individual game % to the running total
             }
             if (pct >= 25) {
                 games25Completion++;
@@ -2607,7 +2609,8 @@
             pctAnyCompletion: eligible ? (Math.round((gamesAnyCompletion / eligible) * 1000) / 10) : 0,
             pct25Completion: eligible ? (Math.round((games25Completion / eligible) * 1000) / 10) : 0,
             pct100Completion: eligible ? (Math.round((games100Completion / eligible) * 1000) / 10) : 0,
-            compPct: totalAvailable ? (Math.round((totalUnlocked / totalAvailable) * 1000) / 10) : 0,
+            // Average of individual percentages (Steam style)
+            compPct: gamesAnyCompletion ? (Math.round((sumCompletionPct / gamesAnyCompletion) * 10) / 10) : 0,
             totalHours: totalHours / 60,
             anyHours: anyHours,
             pctAnyHours: (Math.round((anyHours / wins.length) * 1000) / 10),
@@ -5062,7 +5065,7 @@ function attachBackToTop(container) {
                     });
                     continue; // skip Steam processing for this user
                 }
-
+userWins.forEach(w => console.log(`App ${w.app} Found in steamGamesMap ${steamGamesMap[w.app]}`));
                 // 1. Identify missing app wins prior to parallel worker execution
                 const missingAppWins = userWins.filter(w => !w.isSub && w.app && steamGamesMap[w.app] === undefined);
                 const missingAppIds = [...new Set(missingAppWins.map(w => w.app))];
