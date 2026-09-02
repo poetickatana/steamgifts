@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.6
+// @version      1.10.7
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1182,8 +1182,8 @@
         </label>
     </div>
     <div class="excludemissing-toggle-wrapper" id="sgExcludeMissingToggleRow">
-        <span class="excludemissing-toggle-wrapper">
-            Exclude Missing Games From Play Rate Math
+        <span class="excludemissing-toggle-label">
+            Exclude Missing Games From Play Rate
             <span class="sg-info-icon" title="[OFF] (default) Missing games (privated, revoked, etc) count as unplayed for play rate calculations if they have achievements.
 \n[ON] Missing games are excluded from play rate calculations.">i</span>
         </span>
