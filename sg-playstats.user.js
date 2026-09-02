@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.5
+// @version      1.10.6
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1135,7 +1135,7 @@
 
         <span class="annotate-toggle-label">
             User Profile Summary Format
-            <span class="sg-info-icon" title="Format for summary shown on user profile pages:\n
+            <span class="sg-info-icon" title="Format for summary displayed on user profile pages\n
 [Off] Hidden\n[Compact] Percentages only\n[Full] Percentages + Values">i</span>
         </span>
 
@@ -1157,7 +1157,12 @@
         </label>
     </div>
     <div class="playratestarted-toggle-wrapper" id="sgPlayrateStartedToggleRow">
-        <span class="playratestarted-toggle-label">Show Started Games in Play Rate Chart</span>
+        <span class="playratestarted-toggle-label">
+            Show Started Games in Play Rate Chart
+            <span class="sg-info-icon" title="Controls data displayed in play rate bar chart
+\n[OFF] Played games only (>25% [blue])
+[ON] Played games (>25% [blue]) AND started games (>0% [orange])">i</span>
+        </span>
         <label class="playratestarted-toggle-switch">
             <input type="checkbox" id="sgPlayrateStartedToggle">
             <span class="playratestarted-toggle-slider">
@@ -1178,7 +1183,7 @@
     </div>
     <div class="excludemissing-toggle-wrapper" id="sgExcludeMissingToggleRow">
         <span class="excludemissing-toggle-wrapper">
-            Exclude Missing Games From Play Rate
+            Exclude Missing Games From Play Rate Math
             <span class="sg-info-icon" title="[OFF] (default) Missing games (privated, revoked, etc) count as unplayed for play rate calculations if they have achievements.
 \n[ON] Missing games are excluded from play rate calculations.">i</span>
         </span>
