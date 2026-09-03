@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.7
+// @version      1.10.8
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -4398,7 +4398,7 @@
                     : '';
 
                 const missingIcon = r.isMissing
-                    ? ' <span title="Game was not found in user\'s library. Possible reasons:\n1. The game was revoked or privated by the user\n2. The package is missing from the Steam store and couldn\'t be resolved to an appid\n3. The win is actually a DLC">⛔</span>'
+                    ? ' <span title="Game was not found in user\'s library. Possible reasons:\n1. The game was revoked or privated by the user\n2. The package is missing from the Steam store and couldn\'t be matched to an appid\n3. The app is a DLC that\'s missing the standard DLC tag">⛔</span>'
                     : '';
 
                 const lockIcon = ' <span title="Invite-only giveaway">🔒</span>';
@@ -4535,6 +4535,9 @@
             backBtn = createStyledButton('← Back to Summary', 'Return to group summary', () => {
                 scanState.activeUser = null;
                 scanState.showMissingOnly = false;
+                if (typeof status === 'function') {
+                    status('');
+                }
                 renderSummary(scanState.summary, scanState.membersSet);
                 if (typeof status === 'function') {
                     status(`Summary loaded for ${scanState.summary.length} users.`);
