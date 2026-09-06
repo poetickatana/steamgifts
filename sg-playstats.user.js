@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.8
+// @version      1.10.9
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -78,6 +78,7 @@
     let highlightWLON = false; // default to OFF
     let playrateStartedON = false;
     let ignoreDlcON = true; // default to ON
+    let showExtendedStatsON = false; // default to OFF
     let excludeMissingON = false; // default to OFF
 
     let isDragging = false;
@@ -89,7 +90,7 @@
     let dragOffsetY = 0;
 
     const DRAG_THRESHOLD = 5; // pixels
-    const PANEL_EXPANDED_WIDTH = 800;
+    const PANEL_EXPANDED_WIDTH = 820;
     const PANEL_COLLAPSED_PADDING = '0px';
 
     /************ UI ************/
@@ -521,6 +522,105 @@
             opacity: 0;
         }
         .ignoredlc-toggle-switch input:checked + .ignoredlc-toggle-slider .ignoredlc-on {
+            opacity: 1;
+        }
+
+        .showextendedstats-toggle-wrapper {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+            justify-content: space-between;
+            font-size: 13px;
+            color: #c7d5e0;
+            white-space: nowrap;
+        }
+
+        .showextendedstats-toggle-label  {
+            font-weight:bold;
+            font-size:13px;
+            color:#c7d5e0;
+        }
+
+        .showextendedstats-toggle-switch {
+            position: relative;
+            display: inline-block;
+            /* Reduced size */
+            width: 44px;
+            height: 18px;
+        }
+
+        .showextendedstats-toggle-slider {
+            position: absolute;
+            inset: 0;
+            background: #555;
+            border-radius: 999px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .showextendedstats-toggle-slider::before {
+            content: "";
+            position: absolute;
+            /* Knob is 4px smaller than the container height to create a 2px margin */
+            height: 14px;
+            width: 14px;
+            left: 2px;
+            bottom: 2px;
+            background-color: #fff; /* White knob often looks better on small switches */
+            border-radius: 50%;
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+        }
+
+        .showextendedstats-toggle-switch input:checked + .showextendedstats-toggle-slider::before {
+            /* (Width - Knob Width - Margins) = (44 - 14 - 4) = 26px */
+            transform: translateX(26px);
+        }
+
+        .showextendedstats-toggle-switch input:checked + .showextendedstats-toggle-slider {
+            background: #66c0f4;
+        }
+
+        .showextendedstats-toggle-text {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: 700;
+            font-size: 8px;
+            color: #fff;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            white-space: nowrap; /* Prevents text from wrapping */
+        }
+
+        .showextendedstats-toggle-switch input:not(:checked) + .showextendedstats-toggle-slider .showextendedstats-off {
+            opacity: 0; /* Using opacity: 0 for a cleaner look on small sizes */
+        }
+
+        .showextendedstats-toggle-switch input:checked + .showextendedstats-toggle-slider .showextendedstats-on {
+            opacity: 0;
+        }
+
+        .showextendedstats-off {
+            right: 6px;
+            opacity: 1;
+        }
+        .showextendedstats-on {
+            left: 6px;
+            opacity: 0;
+        }
+
+        /* --- Toggle Logic --- */
+        .showextendedstats-toggle-switch input:not(:checked) + .showextendedstats-toggle-slider .showextendedstats-off {
+            opacity: 1;
+        }
+        .showextendedstats-toggle-switch input:not(:checked) + .showextendedstats-toggle-slider .showextendedstats-on {
+            opacity: 0;
+        }
+        .showextendedstats-toggle-switch input:checked + .showextendedstats-toggle-slider .showextendedstats-off {
+            opacity: 0;
+        }
+        .showextendedstats-toggle-switch input:checked + .showextendedstats-toggle-slider .showextendedstats-on {
             opacity: 1;
         }
 
@@ -1181,6 +1281,19 @@
             </span>
         </label>
     </div>
+    <div class="showextendedstats-toggle-wrapper" id="sgShowExtendedStatsToggleRow">
+        <span class="showextendedstats-toggle-label">
+        Show Extended Achievement Stats
+        <span class="sg-info-icon" title="Display >50% and >75% achievement rates">i</span>
+        </span>
+        <label class="showextendedstats-toggle-switch">
+            <input type="checkbox" id="sgShowExtendedStatsToggle">
+            <span class="showextendedstats-toggle-slider">
+                <span class="showextendedstats-toggle-text showextendedstats-off">OFF</span>
+                <span class="showextendedstats-toggle-text showextendedstats-on">ON</span>
+            </span>
+        </label>
+    </div>
     <div class="excludemissing-toggle-wrapper" id="sgExcludeMissingToggleRow">
         <span class="excludemissing-toggle-label">
             Exclude Missing Games From Play Rate
@@ -1364,6 +1477,11 @@
     const ignoreDlcToggleRow = document.getElementById('sgIgnoreDlcToggleRow');
     if (ignoreDlcToggleRow) {
         settingsPanel.appendChild(ignoreDlcToggleRow);
+    }
+
+    const showExtendedStatsToggleRow = document.getElementById('sgShowExtendedStatsToggleRow');
+    if (showExtendedStatsToggleRow) {
+        settingsPanel.appendChild(showExtendedStatsToggleRow);
     }
 
     const excludeMissingToggleRow = document.getElementById('sgExcludeMissingToggleRow');
@@ -1829,11 +1947,28 @@
         refreshAnnotations();
     });
 
+    const showExtendedStatsToggle = document.getElementById('sgShowExtendedStatsToggle');
+
+    // Load saved state from localStorage (default to true if not set)
+    const savedShowExtendedStats = localStorage.getItem('playstats_showExtendedStats');
+    showExtendedStatsToggle.checked = savedShowExtendedStats !== null ? JSON.parse(savedShowExtendedStats) : showExtendedStatsON;
+
+    // Set the variable to match saved state
+    showExtendedStatsON = showExtendedStatsToggle.checked;
+
+    showExtendedStatsToggle.addEventListener('change', async () => {
+        showExtendedStatsON = showExtendedStatsToggle.checked;
+
+        // Save to localStorage
+        localStorage.setItem('playstats_showExtendedStats', JSON.stringify(showExtendedStatsON));
+        refreshAnnotations();
+    });
+
     const excludeMissingToggle = document.getElementById('sgExcludeMissingToggle');
 
     // Load saved state from localStorage (default to true if not set)
-    const savedexcludeMissing = localStorage.getItem('playstats_excludeMissing');
-    excludeMissingToggle.checked = savedexcludeMissing !== null ? JSON.parse(savedexcludeMissing) : excludeMissingON;
+    const savedExcludeMissing = localStorage.getItem('playstats_excludeMissing');
+    excludeMissingToggle.checked = savedExcludeMissing !== null ? JSON.parse(savedExcludeMissing) : excludeMissingON;
 
     // Set the variable to match saved state
     excludeMissingON = excludeMissingToggle.checked;
@@ -2561,6 +2696,8 @@
         let eligible = 0;
         let gamesAnyCompletion = 0;
         let games25Completion = 0;
+        let games50Completion = 0;
+        let games75Completion = 0;
         let games100Completion = 0;
 
         let totalUnlocked = 0;
@@ -2603,6 +2740,12 @@
                 games25Completion++;
                 yearlyData[winYear].qualified++; // Track for the chart
             }
+            if (pct >= 50) {
+                games50Completion++;
+            }
+            if (pct >= 75) {
+                games75Completion++;
+            }
             if (pct === 100) games100Completion++;
 
             if (done > 0) {
@@ -2616,9 +2759,13 @@
             eligible,
             gamesAnyCompletion,
             games25Completion,
+            games50Completion,
+            games75Completion,
             games100Completion,
             pctAnyCompletion: eligible ? (Math.round((gamesAnyCompletion / eligible) * 1000) / 10) : 0,
             pct25Completion: eligible ? (Math.round((games25Completion / eligible) * 1000) / 10) : 0,
+            pct50Completion: eligible ? (Math.round((games50Completion / eligible) * 1000) / 10) : 0,
+            pct75Completion: eligible ? (Math.round((games75Completion / eligible) * 1000) / 10) : 0,
             pct100Completion: eligible ? (Math.round((games100Completion / eligible) * 1000) / 10) : 0,
             // Average of individual percentages (Steam style)
             compPct: gamesAnyCompletion ? (Math.round((sumCompletionPct / gamesAnyCompletion) * 10) / 10) : 0,
@@ -2766,7 +2913,7 @@
 
         const createSgRow = (left, right, extraStyle = '') => {
             const row = document.createElement('div');
-            row.className = 'featured__table__row sg-injected-row'; // Added marker class
+            row.className = 'featured__table__row sg-injected-row';
             if (extraStyle) row.style = extraStyle;
             row.innerHTML = `
                 <div class="featured__table__row__left">${left}</div>
@@ -2775,75 +2922,48 @@
             return row;
         };
 
-        // Helper to format the timestamp
         const lastUpdatedStr = new Date(ts).toLocaleString([], {
             dateStyle: 'medium',
             timeStyle: 'short'
         });
 
-        // Achievement Row
+        // Build parts conditionally
+        const achParts = [
+            `<div style="display:inline-flex; gap:3px; align-items:baseline;"><small style="opacity:0.6;">Any%</small> ${statDisplay(stats.pctAnyCompletion, stats.gamesAnyCompletion, stats.eligible, '>0 🏆')}</div>`,
+            `<div style="display:inline-flex; gap:3px; align-items:baseline;"><small style="opacity:0.6;">>25%</small> ${statDisplay(stats.pct25Completion, stats.games25Completion, stats.eligible, '>25% 🏆')}</div>`
+        ];
+
+        if (showExtendedStatsON) {
+            achParts.push(`<div style="display:inline-flex; gap:3px; align-items:baseline;"><small style="opacity:0.6;">>50%</small> ${statDisplay(stats.pct50Completion, stats.games50Completion, stats.eligible, '>50% 🏆')}</div>`);
+            achParts.push(`<div style="display:inline-flex; gap:3px; align-items:baseline;"><small style="opacity:0.6;">>75%</small> ${statDisplay(stats.pct75Completion, stats.games75Completion, stats.eligible, '>75% 🏆')}</div>`);
+        }
+
+        achParts.push(`<div style="display:inline-flex; gap:3px; align-items:baseline;"><small style="opacity:0.6;">100%</small> ${statDisplay(stats.pct100Completion, stats.games100Completion, stats.eligible, '100% 🏆')}</div>`);
+        achParts.push(`<div style="display:inline-flex; gap:3px; align-items:baseline;"><small style="opacity:0.6;">Avg</small> <span style="color:#eee;">${stats.compPct}%</span></div>`);
+
+        // Container wraps cleanly without overflowing or overlapping "Achievements" label
         const achHtml = `
-            <small style="opacity:0.6;">Any%</small>
-            ${statDisplay(
-                stats.pctAnyCompletion,
-                stats.gamesAnyCompletion,
-                stats.eligible,
-                '>0 🏆'
-            )}
-
-            <span style="margin:0 5px;opacity:0.3;">|</span>
-
-            <small style="opacity:0.6;">>25%</small>
-            ${statDisplay(
-                stats.pct25Completion,
-                stats.games25Completion,
-                stats.eligible,
-                '>25% 🏆'
-            )}
-
-            <span style="margin:0 5px;opacity:0.3;">|</span>
-
-            <small style="opacity:0.6;">100%</small>
-            ${statDisplay(
-                stats.pct100Completion,
-                stats.games100Completion,
-                stats.eligible,
-                '100% 🏆'
-            )}
-
-            <span style="margin:0 5px;opacity:0.3;">|</span>
-
-            <small style="opacity:0.6;">Avg Completion</small>
-            <span style="color:#eee;">${stats.compPct}%</span>
+            <div style="display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:4px 8px; line-height:1.4;">
+                ${achParts.join('<span style="opacity:0.3;">|</span>')}
+            </div>
         `;
 
         // Playtime Row
         const playHtml = `
             <small style="opacity:0.6;">>0 Hours</small>
-            ${statDisplay(
-                stats.pctAnyHours,
-                stats.anyHours,
-                stats.gamesWon,
-                '>0 Hours'
-            )}
-
+            ${statDisplay(stats.pctAnyHours, stats.anyHours, stats.gamesWon, '>0 Hours')}
             <span style="margin:0 5px;opacity:0.3;">|</span>
-
             <small style="opacity:0.6;">Avg Playtime</small>
             <span style="color:#eee;">${stats.avgHours}h</span>
         `;
 
-        // 1. Add Achievements
         targetTable.appendChild(createSgRow('Achievements', achHtml));
-        // 2. Add Playtime
         targetTable.appendChild(createSgRow('Playtime', playHtml));
-        // 3. Add Last Updated (using smaller font and subtle color)
         targetTable.appendChild(createSgRow(
             '<span style="opacity: 0.5; font-size: 11px;"></span>',
             `<span style="opacity: 0.5; font-style: italic; font-size: 11px;">Last Checked ${lastUpdatedStr}</span>`
         ));
 
-        // Re-initialize SG Tooltips so the new data attributes work
         if (typeof(main) !== 'undefined' && main.initTooltips) {
             main.initTooltips();
         }
@@ -3398,7 +3518,7 @@
 
         scanState.activeUser = username;
         scanState.viewMode = 'user';
-        scanState.showMissingOnly = false; // Reset missing filter when switching users
+        scanState.showMissingOnly = false;
 
         const wins = scanState.userMap[username];
         if (!wins) return;
@@ -3481,6 +3601,8 @@
                         <div style="margin-top: 10px; border-top: 1px solid #3d4450; padding-top: 10px;">
                             ${formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion.toFixed(1), '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`)}
                             ${formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion.toFixed(1), '%', `(${stats.games25Completion}/${stats.eligible})`)}
+                            ${showExtendedStatsON ? formatStatRow('🏆 ≥50% Achievement Completion', stats.pct50Completion.toFixed(1), '%', `(${stats.games50Completion}/${stats.eligible})`) : ''}
+                            ${showExtendedStatsON ? formatStatRow('🏆 ≥75% Achievement Completion', stats.pct75Completion.toFixed(1), '%', `(${stats.games75Completion}/${stats.eligible})`) : ''}
                             ${formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion.toFixed(1), '%', `(${stats.games100Completion}/${stats.eligible})`)}
                             ${formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct.toFixed(1), '%')}
                             ${formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`, true)}
@@ -3578,9 +3700,8 @@
     function renderSummary(summary, membersSet = new Set()) {
         scanState.viewMode = 'summary';
         scanState.activeUser = null;
-        scanState.showMissingOnly = false; // Reset missing toggle filter on summary view
+        scanState.showMissingOnly = false;
 
-        // Clear existing header elements including missing filter toggle
         clearResults();
         resultsWrap.querySelector('#toggle-missing-filter')?.remove();
 
@@ -3650,6 +3771,8 @@
             eligible: 0,
             any: 0,
             twentyFive: 0,
+            fifty: 0,
+            seventyFive: 0,
             hundred: 0,
             hours: 0,
             anyHoursWins: 0,
@@ -3663,6 +3786,8 @@
             totals.eligible += u.eligible || 0;
             totals.any += u.gamesAnyCompletion || 0;
             totals.twentyFive += u.games25Completion || 0;
+            totals.fifty += u.games50Completion || 0;
+            totals.seventyFive += u.games75Completion || 0;
             totals.hundred += u.games100Completion || 0;
             totals.hours += u.totalHours || 0;
             totals.anyHoursWins += u.anyHours || 0;
@@ -3674,6 +3799,8 @@
         const avg = {
             pctAny: totals.eligible ? (Math.round((totals.any / totals.eligible) * 1000) / 10) : 0,
             pct25: totals.eligible ? (Math.round((totals.twentyFive / totals.eligible) * 1000) / 10) : 0,
+            pct50: totals.eligible ? (Math.round((totals.fifty / totals.eligible) * 1000) / 10) : 0,
+            pct75: totals.eligible ? (Math.round((totals.seventyFive / totals.eligible) * 1000) / 10) : 0,
             pct100: totals.eligible ? (Math.round((totals.hundred / totals.eligible) * 1000) / 10) : 0,
             pctComp: totals.available ? (Math.round((totals.unlocked / totals.available) * 1000) / 10) : 0,
             perPlayedWin: totals.anyHoursWins ? (totals.hours / totals.anyHoursWins) : 0
@@ -3682,33 +3809,66 @@
         const table = document.createElement('table');
         table.id = 'sg-summary-table';
 
+        // 2. CONSTRUCT COLGROUP BASED ON SETTING
         const colgroup = document.createElement('colgroup');
-        colgroup.innerHTML = `
-            <col style="width: 21%">
-            <col style="width: 10%">
-            <col style="width: 15%">
-            <col style="width: 15%">
-            <col style="width: 15%">
-            <col style="width: 12%">
-            <col style="width: 12%">
-        `;
+        if (showExtendedStatsON) {
+            colgroup.innerHTML = `
+                <col style="width: 19%">
+                <col style="width: 7%">
+                <col style="width: 11%">
+                <col style="width: 11%">
+                <col style="width: 11%">
+                <col style="width: 11%">
+                <col style="width: 11%">
+                <col style="width: 9%">
+                <col style="width: 10%">
+            `;
+        } else {
+            colgroup.innerHTML = `
+                <col style="width: 21%">
+                <col style="width: 10%">
+                <col style="width: 15%">
+                <col style="width: 15%">
+                <col style="width: 15%">
+                <col style="width: 12%">
+                <col style="width: 12%">
+            `;
+        }
         table.appendChild(colgroup);
 
-        const headers = ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
+        // 3. CONSTRUCT HEADERS AND STICKY AVG ROW
+        const headers = showExtendedStatsON
+            ? ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Played+<br>(>50%🏆)', '% Played++<br>(>75%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime']
+            : ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
+
         const thead = document.createElement('thead');
 
-        // New Average Row
         const trAvg = document.createElement('tr');
         trAvg.className = 'sticky-avg';
-        trAvg.innerHTML = `
-            <td>GLOBAL SUMMARY</td>
-            <td>${totals.wins}</td>
-            <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
-            <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
-            <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
-            <td>${avg.pctComp}%</td>
-            <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
-        `;
+
+        if (showExtendedStatsON) {
+            trAvg.innerHTML = `
+                <td>GLOBAL SUMMARY</td>
+                <td>${totals.wins}</td>
+                <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
+                <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
+                <td>${avg.pct50}% <small>(${totals.fifty}/${totals.eligible})</small></td>
+                <td>${avg.pct75}% <small>(${totals.seventyFive}/${totals.eligible})</small></td>
+                <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
+                <td>${avg.pctComp}%</td>
+                <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
+            `;
+        } else {
+            trAvg.innerHTML = `
+                <td>GLOBAL SUMMARY</td>
+                <td>${totals.wins}</td>
+                <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
+                <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
+                <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
+                <td>${avg.pctComp}%</td>
+                <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
+            `;
+        }
         thead.appendChild(trAvg);
 
         const avgHeight = trAvg.offsetHeight || 30;
@@ -3726,9 +3886,12 @@
         thead.appendChild(trHead);
         table.appendChild(thead);
 
+        // 4. CONSTRUCT BODY ROWS
         const tbody = document.createElement('tbody');
 
-        const cols = ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct100Completion', 'compPct', 'totalHours'];
+        const cols = showExtendedStatsON
+            ? ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct50Completion', 'pct75Completion', 'pct100Completion', 'compPct', 'totalHours']
+            : ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct100Completion', 'compPct', 'totalHours'];
 
         summary.forEach(u => {
             const tr = document.createElement('tr');
@@ -3766,6 +3929,14 @@
                     else if (c === 'pct25Completion') {
                         const val = hasEligibleGames ? `${u.pct25Completion}%` : 'N/A';
                         display = `${val} <small style="opacity:0.7">(${u.games25Completion}/${u.eligible})</small>`;
+                    }
+                    else if (c === 'pct50Completion') {
+                        const val = hasEligibleGames ? `${u.pct50Completion}%` : 'N/A';
+                        display = `${val} <small style="opacity:0.7">(${u.games50Completion}/${u.eligible})</small>`;
+                    }
+                    else if (c === 'pct75Completion') {
+                        const val = hasEligibleGames ? `${u.pct75Completion}%` : 'N/A';
+                        display = `${val} <small style="opacity:0.7">(${u.games75Completion}/${u.eligible})</small>`;
                     }
                     else if (c === 'pct100Completion') {
                         const val = hasEligibleGames ? `${u.pct100Completion}%` : 'N/A';
