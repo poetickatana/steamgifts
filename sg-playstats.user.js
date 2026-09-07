@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.9
+// @version      1.10.10
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -4246,20 +4246,22 @@
         if (useSteamCache) {
             const entry = await idbGet('ownedGames', steamid);
             if (entry && isFresh(entry.ts)) {
-                return { apps: entry.apps, private: !!entry.private };
+                // Include cacheTs in return object (default to 0 if missing for legacy entries)
+                return { apps: entry.apps, private: !!entry.private, cacheTs: entry.ts || 0 };
             }
         }
 
         const games = await getOwnedGames(steamid);
+        const nowTs = Date.now() / 1000;
 
         // Assume privacy if games is null or empty
         if (!games?.length) {
             await idbSet('ownedGames', steamid, {
-                ts: Date.now() / 1000,
+                ts: nowTs,
                 apps: {},
                 private: true
             });
-            return { apps: {}, private: true };
+            return { apps: {}, private: true, cacheTs: nowTs };
         }
 
         const apps = {};
@@ -4269,12 +4271,12 @@
 
         // Always write-through
         await idbSet('ownedGames', steamid, {
-            ts: Date.now() / 1000,
+            ts: nowTs,
             apps,
             private: false
         });
 
-        return { apps, private: false };
+        return { apps, private: false, cacheTs: nowTs };
     }
 
     async function getAchievementsCachedIDB(steamid, appid, useSteamCache) {
@@ -5071,7 +5073,8 @@
                 let steamGamesMap = {};
                 let isPrivateUser = false;
 
-                const res = await getOwnedGamesCachedIDB(steamid, useSteamCache);
+                // 1. First attempt (using cache if enabled)
+                let res = await getOwnedGamesCachedIDB(steamid, useSteamCache);
                 steamGamesMap = res.apps;
                 isPrivateUser = !!res.private;
 
@@ -5085,7 +5088,23 @@
                     });
                     continue; // skip Steam processing for this user
                 }
-userWins.forEach(w => console.log(`App ${w.app} Found in steamGamesMap ${steamGamesMap[w.app]}`));
+
+                // 2. Precise Cache Invalidation Check:
+                // Check if any standalone win occurred AFTER the cached data was snapshot AND is missing from the map
+                const hasWinNewerThanCache = userWins.some(w =>
+                    !w.isSub &&
+                    w.app &&
+                    w.ts > res.cacheTs &&
+                    steamGamesMap[w.app] === undefined
+                );
+
+                // 3. Bypass cache and fetch fresh Steam data if a win post-dates the cache
+                if (hasWinNewerThanCache && useSteamCache) {
+                    console.log(`[Steam Sync] Found win for ${user} newer than IDB cache (${new Date(res.cacheTs * 1000).toLocaleString()}). Fetching fresh GetOwnedGames...`);
+                    res = await getOwnedGamesCachedIDB(steamid, false); // forceFresh = true / bypass cache
+                    steamGamesMap = res.apps;
+                }
+
                 // 1. Identify missing app wins prior to parallel worker execution
                 const missingAppWins = userWins.filter(w => !w.isSub && w.app && steamGamesMap[w.app] === undefined);
                 const missingAppIds = [...new Set(missingAppWins.map(w => w.app))];
