@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.10
+// @version      1.10.11
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -5090,18 +5090,27 @@
                 }
 
                 // 2. Precise Cache Invalidation Check:
-                // Check if any standalone win occurred AFTER the cached data was snapshot AND is missing from the map
-                const hasWinNewerThanCache = userWins.some(w =>
+                // A win is in the "activation pending" window (ended in last 14 days)
+                const isPendingActivationWindow = (w, cacheTs) => {
+                    const fourteenDaysInSec = 14 * 24 * 60 * 60;
+                    const nowTs = Date.now() / 1000;
+                    return (nowTs - w.ts) <= fourteenDaysInSec;
+                };
+
+                // Check if cache is older than 24 hours
+                const cacheAgeInHours = (Date.now() / 1000 - res.cacheTs) / 3600;
+
+                const hasUnresolvedRecentWin = userWins.some(w =>
                     !w.isSub &&
                     w.app &&
-                    w.ts > res.cacheTs &&
-                    steamGamesMap[w.app] === undefined
+                    steamGamesMap[w.app] === undefined && // Still missing in cached data
+                    isPendingActivationWindow(w)          // Won within the last 14 days
                 );
 
-                // 3. Bypass cache and fetch fresh Steam data if a win post-dates the cache
-                if (hasWinNewerThanCache && useSteamCache) {
-                    console.log(`[Steam Sync] Found win for ${user} newer than IDB cache (${new Date(res.cacheTs * 1000).toLocaleString()}). Fetching fresh GetOwnedGames...`);
-                    res = await getOwnedGamesCachedIDB(steamid, false); // forceFresh = true / bypass cache
+                // Only force-refresh if there's an unresolved recent win AND the cache is > 24 hours old
+                if (hasUnresolvedRecentWin && cacheAgeInHours > 24 && useSteamCache) {
+                    console.log(`[Steam Sync] ${user} has unresolved recent wins and cache is ${cacheAgeInHours.toFixed(1)}h old. Fetching fresh GetOwnedGames...`);
+                    res = await getOwnedGamesCachedIDB(steamid, false);
                     steamGamesMap = res.apps;
                 }
 
