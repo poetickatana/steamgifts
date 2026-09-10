@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.12
+// @version      1.10.13
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -66,7 +66,6 @@
     activeUser: null, // username if in detail view
     userDisplay: {}, // lowercase → display casing
     userPrivate: {}
-    //showMissingOnly: false  [CLEANUP]
     };
 
     let summarySort = {
@@ -79,7 +78,6 @@
     let playrateStartedON = false;
     let ignoreDlcON = true; // default to ON
     let showExtendedStatsON = false; // default to OFF
-    //let excludeMissingON = false; // default to OFF  [CLEANUP]
 
     let isDragging = false;
     let dragMoved = false;
@@ -4168,35 +4166,6 @@
         return val;
     }
 
-    /*
-    // Helper: Batch fetch achievement totals from ESGST
-    async function fetchEsgstAchievements(appIds) {
-        if (!appIds || appIds.length === 0) return {};
-
-        const url = `https://esgst.rafaelgomes.xyz/api/games?app_ids=${appIds.join(',')}`;
-
-        try {
-            const res = await fetch(url);
-            const data = await res.json();
-            const results = {};
-
-            const apps = data?.result?.found?.apps;
-
-            if (apps && typeof apps === 'object') {
-                for (const [appId, details] of Object.entries(apps)) {
-                    results[appId] = details?.achievements ?? 0;
-                }
-            }
-
-            return results;
-
-        } catch (err) {
-            console.warn('Failed to fetch ESGST achievement metadata:', err);
-            return {};
-        }
-    } [CLEANUP]
-*/
-
     async function getSubPlaytime(steamid, subid, useSteamCache) {
         const apps = await getSubAppsCached(subid);
         const result = await getOwnedGamesCachedIDB(steamid, useSteamCache);
@@ -4215,7 +4184,6 @@
         // Returns an object containing both total minutes and missing state
         return {
             hours: total,
-            //isMissing: apps.length > 0 && ownedCount === 0 // All constituent apps are missing [CLEANUP]
         };
     }
 
@@ -4224,16 +4192,6 @@
         let done = 0;
         let total = 0;
 
-        // If all apps in sub package are missing/private, query ESGST for achievement totals
-        /*
-        if (isMissing) {
-            const esgstMap = await fetchEsgstAchievements(apps);
-            for (const appid of apps) {
-                total += esgstMap[appid] || 0;
-            }
-            return total > 0 ? `0/${total}` : 'N/A';
-        } [CLEANUP]
-        */
         // Standard API lookup for owned sub apps
         for (const appid of apps) {
             const val = await getAchievementsCachedIDB(steamid, appid, useSteamCache);
@@ -4323,59 +4281,6 @@
 
         container.appendChild(btn);
     }
-
-    /*
-    function getMissingGameCount(results) {
-        if (!Array.isArray(results)) return 0;
-        return results.filter(r => r.isMissing).length;
-    }
-
-    function renderMissingToggleBtn(results, parentEl) {
-        parentEl.querySelector('#toggle-missing-filter')?.remove();
-
-        const missingCount = getMissingGameCount(results);
-        if (missingCount === 0) return;
-
-        const btn = document.createElement('button');
-        btn.id = 'toggle-missing-filter';
-
-        btn.innerText = scanState.showMissingOnly
-            ? `✖ Showing ${missingCount} Private/Missing`
-            : `⛔ ${missingCount} Private/Missing`;
-
-        btn.title = scanState.showMissingOnly
-            ? 'Click to show all games'
-            : 'Click to filter and show only private/missing games';
-
-        btn.style = `
-            float: right;
-            margin-bottom: 5px;
-            margin-right: 5px;
-            padding: 2px 6px;
-            font-size: 11px;
-            font-weight: bold;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-            background: ${scanState.showMissingOnly ? '#ff4c4c' : '#e0a96d'};
-            color: ${scanState.showMissingOnly ? '#ffffff' : '#1b2838'};
-        `;
-
-        btn.onclick = () => {
-            scanState.showMissingOnly = !scanState.showMissingOnly;
-
-            if (scanState.viewMode === 'flat') {
-                renderFlatView();
-            } else if (scanState.activeUser) {
-                render(scanState.userMap[scanState.activeUser]);
-            } else {
-                render(results);
-            }
-        };
-
-        parentEl.appendChild(btn);
-    } [CLEANUP]
-    */
 
     // --- Shared DOM & Toolbar Helpers ---
 
@@ -4525,13 +4430,6 @@
     // --- Main Engine to Render Any Results Table ---
 
     function renderResultsTable({ tableId, rawResults, columns }) {
-        /*
-        // 1. Missing Toggle Filter
-        renderMissingToggleBtn(rawResults, resultsWrap);
-        const displayResults = scanState.showMissingOnly
-            ? rawResults.filter(r => r.isMissing)
-            : rawResults; [CLEANUP]
-        */
         const displayResults = rawResults;
 
         resultsWrap.style.maxHeight = '70vh';
@@ -4580,7 +4478,6 @@
         if (scanState.activeUser && ['all', 'group'].includes(scanState.mode)) {
             backBtn = createStyledButton('← Back to Summary', 'Return to group summary', () => {
                 scanState.activeUser = null;
-                // scanState.showMissingOnly = false; [CLEANUP]
                 if (typeof status === 'function') {
                     status('');
                 }
@@ -4615,7 +4512,6 @@
         if (!resultsWrap.querySelector('#winners-view')) {
             winnersBtn = createStyledButton('Winners View', 'Switch to Summary View', () => {
                 scanState.viewMode = 'summary';
-                // scanState.showMissingOnly = false; [CLEANUP]
                 renderSummary(scanState.summary, scanState.membersSet);
             }, { float: 'left' });
             winnersBtn.id = 'winners-view';
@@ -4957,7 +4853,6 @@
                     userWins.forEach(w => {
                         w.hours = null;
                         w.ach = null;
-                        //Lw.isMissing = false; [CLEANUP]
                     });
                     continue; // skip Steam processing for this user
                 }
@@ -4987,21 +4882,6 @@
                     steamGamesMap = res.apps;
                 }
 
-                /*
-                // 1. Identify missing app wins prior to parallel worker execution
-                const missingAppWins = userWins.filter(w => !w.isSub && w.app && steamGamesMap[w.app] === undefined);
-                const missingAppIds = [...new Set(missingAppWins.map(w => w.app))];
-
-                // 2. Fetch total achievements count from ESGST for all missing games in one batch request
-                const esgstAchMap = await fetchEsgstAchievements(missingAppIds);
-
-                missingAppWins.forEach(w => {
-                    const totalAch = esgstAchMap[w.app] || 0;
-                    w.ach = `0/${totalAch}`;
-                    w.hours = 0;
-                }); [CLEANUP]
-                */
-
                 initSteamProgress(userWins.length);
                 let done = 0;
 
@@ -5011,34 +4891,19 @@
                         try {
                             const subData = await getSubPlaytime(steamid, w.sub, useSteamCache);
                             w.hours = subData.hours;
-                            // w.isMissing = subData.isMissing; [CLEANUP]
                             w.ach = await getSubAchievements(steamid, w.sub, useSteamCache, w.isMissing);
                             console.log (`sub name : ${w.name}, sub missing: ${w.isMissing}, sub ach: ${w.ach}`);
                         } catch {
                             w.hours = 0;
-                            //w.isMissing = true; [CLEANUP]
                             w.ach = 'N/A';
                         }
                     } else {
-                        const isOwned = steamGamesMap[w.app] !== undefined;
-
-                        if (isOwned) {
-                            //w.isMissing = false;  [CLEANUP]
-                            w.hours = steamGamesMap[w.app] ?? 0;
-                            try {
-                                w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache);
-                            } catch {
-                                w.ach = 'N/A';
-                            }
-                        } /*else {
-                            // Missing/Hidden Standalone Game
-                            w.isMissing = true;
-                            w.hours = 0;
-
-                            const totalAch = esgstAchMap[w.app] || 0;
-                            //w.ach = totalAch > 0 ? `0/${totalAch}` : 'N/A';
-                            w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache); [CLEANUP]
-                        } */
+                        w.hours = steamGamesMap[w.app] ?? 0;
+                        try {
+                            w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache);
+                        } catch {
+                            w.ach = 'N/A';
+                        }
                     }
 
                     updateSteamProgress(++done, userWins.length);
