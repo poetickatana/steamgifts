@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.11
+// @version      1.10.12
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -65,8 +65,8 @@
     membersSet : null,
     activeUser: null, // username if in detail view
     userDisplay: {}, // lowercase → display casing
-    userPrivate: {},
-    showMissingOnly: false
+    userPrivate: {}
+    //showMissingOnly: false  [CLEANUP]
     };
 
     let summarySort = {
@@ -79,7 +79,7 @@
     let playrateStartedON = false;
     let ignoreDlcON = true; // default to ON
     let showExtendedStatsON = false; // default to OFF
-    let excludeMissingON = false; // default to OFF
+    //let excludeMissingON = false; // default to OFF  [CLEANUP]
 
     let isDragging = false;
     let dragMoved = false;
@@ -621,104 +621,6 @@
             opacity: 0;
         }
         .showextendedstats-toggle-switch input:checked + .showextendedstats-toggle-slider .showextendedstats-on {
-            opacity: 1;
-        }
-
-        .excludemissing-toggle-wrapper {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            font-size: 13px;
-            color: #c7d5e0;
-            white-space: nowrap;
-        }
-
-        .excludemissing-toggle-label  {
-            font-weight:bold;
-            font-size:13px;
-            color:#c7d5e0;
-        }
-
-        .excludemissing-toggle-switch {
-            position: relative;
-            display: inline-block;
-            /* Reduced size */
-            width: 44px;
-            height: 18px;
-        }
-
-        .excludemissing-toggle-slider {
-            position: absolute;
-            inset: 0;
-            background: #555;
-            border-radius: 999px;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-
-        .excludemissing-toggle-slider::before {
-            content: "";
-            position: absolute;
-            /* Knob is 4px smaller than the container height to create a 2px margin */
-            height: 14px;
-            width: 14px;
-            left: 2px;
-            bottom: 2px;
-            background-color: #fff; /* White knob often looks better on small switches */
-            border-radius: 50%;
-            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            z-index: 2;
-        }
-
-        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider::before {
-            /* (Width - Knob Width - Margins) = (44 - 14 - 4) = 26px */
-            transform: translateX(26px);
-        }
-
-        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider {
-            background: #66c0f4;
-        }
-
-        .excludemissing-toggle-text {
-            position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
-            font-weight: 700;
-            font-size: 8px;
-            color: #fff;
-            pointer-events: none;
-            transition: opacity 0.2s;
-            white-space: nowrap; /* Prevents text from wrapping */
-        }
-
-        .excludemissing-toggle-switch input:not(:checked) + .excludemissing-toggle-slider .excludemissing-off {
-            opacity: 0; /* Using opacity: 0 for a cleaner look on small sizes */
-        }
-
-        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider .excludemissing-on {
-            opacity: 0;
-        }
-
-        .excludemissing-off {
-            right: 6px;
-            opacity: 1;
-        }
-        .excludemissing-on {
-            left: 6px;
-            opacity: 0;
-        }
-
-        /* --- Toggle Logic --- */
-        .excludemissing-toggle-switch input:not(:checked) + .excludemissing-toggle-slider .excludemissing-off {
-            opacity: 1;
-        }
-        .excludemissing-toggle-switch input:not(:checked) + .excludemissing-toggle-slider .excludemissing-on {
-            opacity: 0;
-        }
-        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider .excludemissing-off {
-            opacity: 0;
-        }
-        .excludemissing-toggle-switch input:checked + .excludemissing-toggle-slider .excludemissing-on {
             opacity: 1;
         }
 
@@ -1294,20 +1196,6 @@
             </span>
         </label>
     </div>
-    <div class="excludemissing-toggle-wrapper" id="sgExcludeMissingToggleRow">
-        <span class="excludemissing-toggle-label">
-            Exclude Missing Games From Play Rate
-            <span class="sg-info-icon" title="[OFF] (default) Missing games (privated, revoked, etc) count as unplayed for play rate calculations if they have achievements.
-\n[ON] Missing games are excluded from play rate calculations.">i</span>
-        </span>
-        <label class="excludemissing-toggle-switch">
-            <input type="checkbox" id="sgExcludeMissingToggle">
-            <span class="excludemissing-toggle-slider">
-                <span class="excludemissing-toggle-text excludemissing-off">OFF</span>
-                <span class="excludemissing-toggle-text excludemissing-on">ON</span>
-            </span>
-        </label>
-    </div>
     `;
     document.body.appendChild(panel);
 
@@ -1482,11 +1370,6 @@
     const showExtendedStatsToggleRow = document.getElementById('sgShowExtendedStatsToggleRow');
     if (showExtendedStatsToggleRow) {
         settingsPanel.appendChild(showExtendedStatsToggleRow);
-    }
-
-    const excludeMissingToggleRow = document.getElementById('sgExcludeMissingToggleRow');
-    if (excludeMissingToggleRow) {
-        settingsPanel.appendChild(excludeMissingToggleRow);
     }
 
     topControls.appendChild(restoreBtn);
@@ -1961,23 +1844,6 @@
 
         // Save to localStorage
         localStorage.setItem('playstats_showExtendedStats', JSON.stringify(showExtendedStatsON));
-        refreshAnnotations();
-    });
-
-    const excludeMissingToggle = document.getElementById('sgExcludeMissingToggle');
-
-    // Load saved state from localStorage (default to true if not set)
-    const savedExcludeMissing = localStorage.getItem('playstats_excludeMissing');
-    excludeMissingToggle.checked = savedExcludeMissing !== null ? JSON.parse(savedExcludeMissing) : excludeMissingON;
-
-    // Set the variable to match saved state
-    excludeMissingON = excludeMissingToggle.checked;
-
-    excludeMissingToggle.addEventListener('change', async () => {
-        excludeMissingON = excludeMissingToggle.checked;
-
-        // Save to localStorage
-        localStorage.setItem('playstats_excludeMissing', JSON.stringify(excludeMissingON));
         refreshAnnotations();
     });
 
@@ -2721,7 +2587,7 @@
             const [done, total] = w.ach.split('/').map(Number);
             if (!total || isNaN(done) || isNaN(total)) continue;
 
-            if (w.isMissing && excludeMissingON) continue;
+            // [TEST]if (w.isMissing && excludeMissingON) continue;
             eligible++;
 
             // 3. Process Yearly Trend (Based on win date)
@@ -2837,8 +2703,11 @@
                 await writable.close();
                 return;
             } catch (err) {
-                // User canceled → silently ignore
-                return;
+                // If the user deliberately canceled the Save dialog, do nothing and exit
+                if (err && err.name === 'AbortError') return;
+
+                // For any other permission/sandbox error, log it and fall through to Blob download
+                console.warn('[CSV Export] Native picker failed or restricted, falling back to Blob download:', err);
             }
         }
 
@@ -4299,6 +4168,7 @@
         return val;
     }
 
+    /*
     // Helper: Batch fetch achievement totals from ESGST
     async function fetchEsgstAchievements(appIds) {
         if (!appIds || appIds.length === 0) return {};
@@ -4324,7 +4194,8 @@
             console.warn('Failed to fetch ESGST achievement metadata:', err);
             return {};
         }
-    }
+    } [CLEANUP]
+*/
 
     async function getSubPlaytime(steamid, subid, useSteamCache) {
         const apps = await getSubAppsCached(subid);
@@ -4344,7 +4215,7 @@
         // Returns an object containing both total minutes and missing state
         return {
             hours: total,
-            isMissing: apps.length > 0 && ownedCount === 0 // All constituent apps are missing
+            //isMissing: apps.length > 0 && ownedCount === 0 // All constituent apps are missing [CLEANUP]
         };
     }
 
@@ -4354,14 +4225,15 @@
         let total = 0;
 
         // If all apps in sub package are missing/private, query ESGST for achievement totals
+        /*
         if (isMissing) {
             const esgstMap = await fetchEsgstAchievements(apps);
             for (const appid of apps) {
                 total += esgstMap[appid] || 0;
             }
             return total > 0 ? `0/${total}` : 'N/A';
-        }
-
+        } [CLEANUP]
+        */
         // Standard API lookup for owned sub apps
         for (const appid of apps) {
             const val = await getAchievementsCachedIDB(steamid, appid, useSteamCache);
@@ -4452,6 +4324,7 @@
         container.appendChild(btn);
     }
 
+    /*
     function getMissingGameCount(results) {
         if (!Array.isArray(results)) return 0;
         return results.filter(r => r.isMissing).length;
@@ -4501,7 +4374,8 @@
         };
 
         parentEl.appendChild(btn);
-    }
+    } [CLEANUP]
+    */
 
     // --- Shared DOM & Toolbar Helpers ---
 
@@ -4570,10 +4444,6 @@
                     ? ' <span title="Whitelist-only giveaway">💙</span>'
                     : '';
 
-                const missingIcon = r.isMissing
-                    ? ' <span title="Game was not found in user\'s library. Possible reasons:\n1. The game was revoked or privated by the user\n2. The package is missing from the Steam store and couldn\'t be matched to an appid\n3. The app is a DLC that\'s missing the standard DLC tag">⛔</span>'
-                    : '';
-
                 const lockIcon = ' <span title="Invite-only giveaway">🔒</span>';
 
                 if (r.url) {
@@ -4585,11 +4455,11 @@
 
                     td.appendChild(a);
                     // Append html string for icons with title attributes
-                    td.insertAdjacentHTML('beforeend', wlIcon + missingIcon);
+                    td.insertAdjacentHTML('beforeend', wlIcon);
                 } else {
                     td.innerText = r.name;
                     td.style.color = '#888';
-                    td.insertAdjacentHTML('beforeend', lockIcon + wlIcon + missingIcon);
+                    td.insertAdjacentHTML('beforeend', lockIcon);
                 }
                 break;
             }
@@ -4655,11 +4525,14 @@
     // --- Main Engine to Render Any Results Table ---
 
     function renderResultsTable({ tableId, rawResults, columns }) {
+        /*
         // 1. Missing Toggle Filter
         renderMissingToggleBtn(rawResults, resultsWrap);
         const displayResults = scanState.showMissingOnly
             ? rawResults.filter(r => r.isMissing)
-            : rawResults;
+            : rawResults; [CLEANUP]
+        */
+        const displayResults = rawResults;
 
         resultsWrap.style.maxHeight = '70vh';
         resultsWrap.style.overflowY = 'auto';
@@ -4707,7 +4580,7 @@
         if (scanState.activeUser && ['all', 'group'].includes(scanState.mode)) {
             backBtn = createStyledButton('← Back to Summary', 'Return to group summary', () => {
                 scanState.activeUser = null;
-                scanState.showMissingOnly = false;
+                // scanState.showMissingOnly = false; [CLEANUP]
                 if (typeof status === 'function') {
                     status('');
                 }
@@ -4742,7 +4615,7 @@
         if (!resultsWrap.querySelector('#winners-view')) {
             winnersBtn = createStyledButton('Winners View', 'Switch to Summary View', () => {
                 scanState.viewMode = 'summary';
-                scanState.showMissingOnly = false;
+                // scanState.showMissingOnly = false; [CLEANUP]
                 renderSummary(scanState.summary, scanState.membersSet);
             }, { float: 'left' });
             winnersBtn.id = 'winners-view';
@@ -5084,7 +4957,7 @@
                     userWins.forEach(w => {
                         w.hours = null;
                         w.ach = null;
-                        w.isMissing = false;
+                        //Lw.isMissing = false; [CLEANUP]
                     });
                     continue; // skip Steam processing for this user
                 }
@@ -5114,6 +4987,7 @@
                     steamGamesMap = res.apps;
                 }
 
+                /*
                 // 1. Identify missing app wins prior to parallel worker execution
                 const missingAppWins = userWins.filter(w => !w.isSub && w.app && steamGamesMap[w.app] === undefined);
                 const missingAppIds = [...new Set(missingAppWins.map(w => w.app))];
@@ -5125,7 +4999,8 @@
                     const totalAch = esgstAchMap[w.app] || 0;
                     w.ach = `0/${totalAch}`;
                     w.hours = 0;
-                });
+                }); [CLEANUP]
+                */
 
                 initSteamProgress(userWins.length);
                 let done = 0;
@@ -5136,33 +5011,34 @@
                         try {
                             const subData = await getSubPlaytime(steamid, w.sub, useSteamCache);
                             w.hours = subData.hours;
-                            w.isMissing = subData.isMissing;
+                            // w.isMissing = subData.isMissing; [CLEANUP]
                             w.ach = await getSubAchievements(steamid, w.sub, useSteamCache, w.isMissing);
                             console.log (`sub name : ${w.name}, sub missing: ${w.isMissing}, sub ach: ${w.ach}`);
                         } catch {
                             w.hours = 0;
-                            w.isMissing = true;
+                            //w.isMissing = true; [CLEANUP]
                             w.ach = 'N/A';
                         }
                     } else {
                         const isOwned = steamGamesMap[w.app] !== undefined;
 
                         if (isOwned) {
-                            w.isMissing = false;
+                            //w.isMissing = false;  [CLEANUP]
                             w.hours = steamGamesMap[w.app] ?? 0;
                             try {
                                 w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache);
                             } catch {
                                 w.ach = 'N/A';
                             }
-                        } else {
+                        } /*else {
                             // Missing/Hidden Standalone Game
                             w.isMissing = true;
                             w.hours = 0;
 
                             const totalAch = esgstAchMap[w.app] || 0;
-                            w.ach = totalAch > 0 ? `0/${totalAch}` : 'N/A';
-                        }
+                            //w.ach = totalAch > 0 ? `0/${totalAch}` : 'N/A';
+                            w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache); [CLEANUP]
+                        } */
                     }
 
                     updateSteamProgress(++done, userWins.length);
