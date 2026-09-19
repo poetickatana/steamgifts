@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.10.13
+// @version      1.11.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -39,6 +39,7 @@
     const STEAM_META_BATCH_SIZE = 10;
     const STEAM_META_CACHE_KEY = 'steam_meta_cache_v1';
     const STEAM_META_CACHE_TTL = 30 * 24 * 60 * 60; // 1 month in seconds
+    const MAX_CACHED_USERS = 1000;
 
     const DEFAULT_SETTINGS = {
         steamApiKey: '',
@@ -65,7 +66,8 @@
     membersSet : null,
     activeUser: null, // username if in detail view
     userDisplay: {}, // lowercase → display casing
-    userPrivate: {}
+    userPrivate: {},
+    cachedTs: null
     };
 
     let summarySort = {
@@ -1867,38 +1869,43 @@
     panel.style.width = 'fit-content';
     panel.style.padding = PANEL_COLLAPSED_PADDING;
 
-    header.addEventListener('click', (e) => {
-        if (dragMoved) {
-            // This was a drag, not a click → do nothing
-            dragMoved = false;
-            return;
-        }
-        expanded = !expanded;
-        body.style.display = expanded ? 'block' : 'none';
-        if (expanded) {
-            panel.style.width = PANEL_EXPANDED_WIDTH + 'px';
-            requestAnimationFrame(() => {
-                const rect = panel.getBoundingClientRect();
+   header.addEventListener('click', async (e) => { // <-- Made async
+       if (dragMoved) {
+           // This was a drag, not a click → do nothing
+           dragMoved = false;
+           return;
+       }
+       expanded = !expanded;
+       body.style.display = expanded ? 'block' : 'none';
 
-                let left = rect.left;
-                let top  = rect.top;
+       if (expanded) {
+           panel.style.width = PANEL_EXPANDED_WIDTH + 'px';
 
-                if (rect.right > window.innerWidth) {
-                    left = window.innerWidth - rect.width;
-                }
+           // RESTORE PROFILE CACHE
+           const restored = await tryRestoreProfileScan();
 
-                if (rect.bottom > window.innerHeight) {
-                    top = window.innerHeight - rect.height;
-                }
+           requestAnimationFrame(() => {
+               const rect = panel.getBoundingClientRect();
 
-                panel.style.left = Math.max(0, left) + 'px';
-                panel.style.top  = Math.max(0, top)  + 'px';
-            });
-        } else {
-            panel.style.width = 'fit-content';
-        }
-        header.innerText = (expanded ? '▼ ' : '▶ ') + 'Playstats';
-    });
+               let left = rect.left;
+               let top  = rect.top;
+
+               if (rect.right > window.innerWidth) {
+                   left = window.innerWidth - rect.width;
+               }
+
+               if (rect.bottom > window.innerHeight) {
+                   top = window.innerHeight - rect.height;
+               }
+
+               panel.style.left = Math.max(0, left) + 'px';
+               panel.style.top  = Math.max(0, top)  + 'px';
+           });
+       } else {
+           panel.style.width = 'fit-content';
+       }
+       header.innerText = (expanded ? '▼ ' : '▶ ') + 'Playstats';
+   });
 
     // panel drag logic
     header.addEventListener('mousedown', e => {
@@ -1959,6 +1966,28 @@
 
     /************ HELPERS ************/
     const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    async function tryRestoreProfileScan() {
+        // Check if on a /user/ Profile page
+        const pageUserMatch = location.pathname.match(/\/user\/([^\/]+)/);
+        const targetUser = pageUserMatch ? pageUserMatch[1].toLowerCase() : null;
+
+        if (!targetUser) return false;
+
+        const cachedData = await loadUserScanCache(targetUser);
+        if (!cachedData || !cachedData.wins?.length) return false;
+
+        // Restore state for target user
+        scanState.userMap = { [targetUser]: cachedData.wins };
+        scanState.userPrivate[targetUser] = cachedData.isPrivate;
+        scanState.activeUser = targetUser;
+        scanState.mode = 'single';
+        scanState.cachedTs = cachedData.ts;
+
+        // Render detailed user view instantly
+        showUserDetail(targetUser, false);
+        return true;
+    }
 
     function fetchPage(url) {
         return fetch(url, { credentials: 'include' }).then(r => r.text());
@@ -2584,8 +2613,6 @@
 
             const [done, total] = w.ach.split('/').map(Number);
             if (!total || isNaN(done) || isNaN(total)) continue;
-
-            // [TEST]if (w.isMissing && excludeMissingON) continue;
             eligible++;
 
             // 3. Process Yearly Trend (Based on win date)
@@ -2815,13 +2842,21 @@
             </div>
         `;
 
+        const avgPlaytimeTooltip = `data-ui-tooltip='{"rows":[{"columns":[{"name":"Total Playtime"},{"name":"${stats.totalHours.toFixed(1)}h","color":"#8f96a6"}]}]}'`;
+
         // Playtime Row
         const playHtml = `
-            <small style="opacity:0.6;">>0 Hours</small>
-            ${statDisplay(stats.pctAnyHours, stats.anyHours, stats.gamesWon, '>0 Hours')}
+            <div style="display:inline-flex; gap:3px; align-items:baseline;">
+                <small style="opacity:0.6;">>0 Hours</small>
+                ${statDisplay(stats.pctAnyHours, stats.anyHours, stats.gamesWon, '>0 Hours')}
+            </div>
             <span style="margin:0 5px;opacity:0.3;">|</span>
-            <small style="opacity:0.6;">Avg Playtime</small>
-            <span style="color:#eee;">${stats.avgHours}h</span>
+            <div style="display:inline-flex; gap:3px; align-items:baseline;">
+                <small style="opacity:0.6;">Avg Playtime</small>
+                <span style="color:#eee;cursor:help;" ${avgPlaytimeTooltip}>
+                    ${stats.avgHours.toFixed(1)}h
+                </span>
+            </div>
         `;
 
         targetTable.appendChild(createSgRow('Achievements', achHtml));
@@ -3379,13 +3414,12 @@
 
     function showUserDetail(username, fullScan = false) {
         // Dynamic cleanup of header buttons
-        ['table', '#dismiss-table', '#write-csv', '#flat-view', '#winners-view', '#back-to-summary', '#toggle-missing-filter'].forEach(sel => {
+        ['table', '#dismiss-table', '#write-csv', '#flat-view', '#winners-view', '#back-to-summary'].forEach(sel => {
             resultsWrap.querySelector(sel)?.remove();
         });
 
         scanState.activeUser = username;
         scanState.viewMode = 'user';
-        scanState.showMissingOnly = false;
 
         const wins = scanState.userMap[username];
         if (!wins) return;
@@ -3398,7 +3432,7 @@
 
             return `
                 <div style="line-height: 1.8; font-family: 'Segoe UI', sans-serif; display: flex; align-items: center; white-space: nowrap;">
-                    <span style="width: 230px; opacity: 0.9;">${label}</span>
+                    <span style="width: 220px; opacity: 0.9;">${label}</span>
                     <span style="width: 60px; text-align: right; font-weight: bold; color: #fff;">${displayValue}</span>
                     <span style="margin-left: 12px; opacity: 0.5; font-size: 0.85em; min-width: 60px;">${detail}</span>
                 </div>`;
@@ -3454,6 +3488,13 @@
                 </div>`;
         };
 
+        const cachedTs = scanState.cachedTs;
+            const cacheNotice = cachedTs
+                ? `<div style="font-size: 0.8em; opacity: 0.6; margin-top: 3px; font-style: italic; font-weight: normal;" title="${new Date(cachedTs * 1000).toLocaleString()}">
+                     Last Checked ${new Date(cachedTs * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short'})}
+                   </div>`
+        : '';
+
         const statusEl = document.getElementById('sgStatus');
         if (statusEl) {
             statusEl.style.padding = "15px";
@@ -3465,6 +3506,7 @@
                                 ${scanState.userDisplay[username] ?? username}
                             </a>
                         </b>
+                        ${cacheNotice}
                         <div style="margin-top: 10px; border-top: 1px solid #3d4450; padding-top: 10px;">
                             ${formatStatRow('🎮 >0% Achievement Completion', stats.pctAnyCompletion.toFixed(1), '%', `(${stats.gamesAnyCompletion}/${stats.eligible})`)}
                             ${formatStatRow('🏆 ≥25% Achievement Completion', stats.pct25Completion.toFixed(1), '%', `(${stats.games25Completion}/${stats.eligible})`)}
@@ -3473,7 +3515,7 @@
                             ${formatStatRow('⭐ 100% Achievement Completion', stats.pct100Completion.toFixed(1), '%', `(${stats.games100Completion}/${stats.eligible})`)}
                             ${formatStatRow('🎗️ Avg. Achievement Percentage', stats.compPct.toFixed(1), '%')}
                             ${formatStatRow('⏱️ Games with any Playtime', stats.pctAnyHours.toFixed(1), '%', `(${stats.anyHours}/${stats.gamesWon})`, true)}
-                            ${formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h', '', true)}
+                            ${formatStatRow('⏰ Avg. Game Playtime', stats.avgHours.toFixed(1), 'h', `∑ ${stats.totalHours.toFixed(1)}h`)}
                         </div>
                         ${scanState.userPrivate[username] ? '<div style="margin-top:10px; color:#ff4c4c;">🔒 Steam profile is private</div>' : ''}
                     </div>
@@ -3554,7 +3596,6 @@
             '#flat-view',
             '#winners-view',
             '#back-to-summary',
-            '#toggle-missing-filter',
             '.sg-back-to-top'
         ];
 
@@ -3567,10 +3608,8 @@
     function renderSummary(summary, membersSet = new Set()) {
         scanState.viewMode = 'summary';
         scanState.activeUser = null;
-        scanState.showMissingOnly = false;
 
         clearResults();
-        resultsWrap.querySelector('#toggle-missing-filter')?.remove();
 
         const dismissBtn = document.createElement('button');
         dismissBtn.id = 'dismiss-table';
@@ -3962,7 +4001,7 @@
      * Steam IndexedDB
      ***********************/
     const STEAM_DB_NAME = 'playstats-steam-cache';
-    const STEAM_DB_VERSION = 2;
+    const STEAM_DB_VERSION = 3;
     //const GA_MAX_TOTAL = 50_000; // total giveaways across all pages
 
     let steamDbPromise = null;
@@ -3984,6 +4023,10 @@
                 }
                 if (!db.objectStoreNames.contains('subs')) {
                     db.createObjectStore('subs'); // key = subid
+               }
+               // --- Per-user scan snapshot store ---
+               if (!db.objectStoreNames.contains('scannedUsers')) {
+                   db.createObjectStore('scannedUsers'); // key = username (lowercase)
                }
             };
 
@@ -4078,6 +4121,73 @@
         await cleanupStore('achievements');
     }
 
+    /*************************
+     * User results IndexedDB
+     *************************/
+    // Save fully enriched user scan snapshot
+    async function saveUserScanCache(username, userWins) {
+        if (!username || !userWins) return null;
+        const key = username.toLowerCase();
+        const now = Math.floor(Date.now() / 1000);
+
+        if (scanState.activeUser?.toLowerCase() === key) {
+            scanState.cachedTs = now;
+        }
+
+        await idbSet('scannedUsers', key, {
+            username: key,
+            ts: now,
+            lastAccessed: now,
+            wins: userWins,
+            isPrivate: !!scanState.userPrivate[key]
+        });
+
+        // Prune store if limit is exceeded
+        pruneScannedUsersLRU(MAX_CACHED_USERS).catch(() => {});
+
+        return now;
+    }
+
+    // Load cached user snapshot
+    async function loadUserScanCache(username) {
+        if (!username) return null;
+        const key = username.toLowerCase();
+        const data = await idbGet('scannedUsers', key);
+
+        if (data) {
+            // Touch lastAccessed timestamp asynchronously so reads don't block the UI
+            data.lastAccessed = Math.floor(Date.now() / 1000);
+            idbSet('scannedUsers', key, data).catch(() => {});
+        }
+
+        return data;
+    }
+
+    async function pruneScannedUsersLRU() {
+        const entries = [];
+
+        // Collect all keys and their last accessed time
+        await idbIterate('scannedUsers', (value, key) => {
+            entries.push({
+                key: key,
+                // Fallback to ts if lastAccessed isn't set yet
+                accessTime: value.lastAccessed || value.ts || 0
+            });
+        });
+
+        if (entries.length <= MAX_CACHED_USERS) return;
+
+        // Sort by oldest access time first
+        entries.sort((a, b) => a.accessTime - b.accessTime);
+
+        // Number of records to remove
+        const overflowCount = entries.length - MAX_CACHED_USERS;
+        const toDelete = entries.slice(0, overflowCount);
+
+        for (const item of toDelete) {
+            await idbDelete('scannedUsers', item.key);
+        }
+    }
     /************ STEAM DATA ************/
     function getOwnedGames(steamid) {
         return new Promise(resolve => {
@@ -4187,7 +4297,7 @@
         };
     }
 
-    async function getSubAchievements(steamid, subid, useSteamCache, isMissing = false) {
+    async function getSubAchievements(steamid, subid, useSteamCache) {
         const apps = await getSubAppsCached(subid);
         let done = 0;
         let total = 0;
@@ -4386,12 +4496,7 @@
                 break;
             }
             case 'achievements': {
-                if (r.isMissing && r.ach && r.ach !== "N/A") {
-                    td.innerText = r.ach;
-                    td.title = 'Game not found in Steam library';
-                    td.style.color = '#e01e6d';
-                    td.dataset.value = 0;
-                } else if (r.ach && r.ach.includes('/') && r.app) {
+                if (r.ach && r.ach.includes('/') && r.app) {
                     const [done, total] = r.ach.split('/').map(Number);
                     const a = document.createElement('a');
                     a.href = `https://steamcommunity.com/profiles/${r.steamid}/stats/${r.app}/achievements`;
@@ -4891,8 +4996,8 @@
                         try {
                             const subData = await getSubPlaytime(steamid, w.sub, useSteamCache);
                             w.hours = subData.hours;
-                            w.ach = await getSubAchievements(steamid, w.sub, useSteamCache, w.isMissing);
-                            console.log (`sub name : ${w.name}, sub missing: ${w.isMissing}, sub ach: ${w.ach}`);
+                            w.ach = await getSubAchievements(steamid, w.sub, useSteamCache);
+                            console.log (`sub name : ${w.name}, sub ach: ${w.ach}`);
                         } catch {
                             w.hours = 0;
                             w.ach = 'N/A';
@@ -4917,6 +5022,11 @@
                 await runWithConcurrency(userWins, concurrency, processWin);
 
                 finishSteamProgress();
+
+                // CACHE ENRICHED USER SNAPSHOT
+                if (fullScan) {
+                    await saveUserScanCache(user, userWins);
+                }
 
                 // Between users delay
                 //if (mode !== 'single') await sleep(20);
