@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.11.1
+// @version      1.11.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1968,8 +1968,8 @@
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     async function tryRestoreProfileScan() {
-        // Check if on a /user/ Profile page
-        const pageUserMatch = location.pathname.match(/\/user\/([^\/]+)/);
+        // Check if on a /user/ Profile won page
+        const pageUserMatch = location.pathname.match(/\/user\/([^\/]+)\/giveaways\/won(?:\/|$)/i);
         const targetUser = pageUserMatch ? pageUserMatch[1].toLowerCase() : null;
 
         if (!targetUser) return false;
