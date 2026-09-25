@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.11.2
+// @version      1.11.3
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -4200,17 +4200,44 @@
     }
 
     function getAchievements(steamid, appid) {
-        return new Promise(resolve => {
+        return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: 'GET',
                 url: `https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1/?key=${settings.steamApiKey}&steamid=${steamid}&appid=${appid}`,
                 onload: r => {
-                    const data = JSON.parse(r.responseText);
-                    if (!data.playerstats?.achievements) return resolve('N/A');
-                    const total = data.playerstats.achievements.length;
-                    const done = data.playerstats.achievements.filter(a => a.achieved).length;
-                    resolve(`${done}/${total}`);
-                }
+                    try {
+                        const data = JSON.parse(r.responseText);
+                        const stats = data?.playerstats;
+
+                        const errText = (stats?.error || '').toLowerCase();
+
+                        // 1. Only reject if Steam explicitly identifies per-game privacy
+                        if (errText.includes('profile is not public')) {
+                            return reject(new Error('Profile is not public'));
+                        }
+
+                        // 2. If Steam returned an error (Internal server error, no stats, etc.), treat as valid 'N/A'
+                        if (!stats || stats.success === false || stats.error) {
+                            return resolve('N/A');
+                        }
+
+                        // 3. Handle public games with empty achievement arrays
+                        if (!stats.achievements || stats.achievements.length === 0) {
+                            return resolve('N/A');
+                        }
+
+                        // 4. Valid achievement data returned
+                        const total = stats.achievements.length;
+                        const done = stats.achievements.filter(a => a.achieved).length;
+                        resolve(`${done}/${total}`);
+
+                    } catch (err) {
+                        // JSON parse failures or malformed responses fall through gracefully
+                        resolve('N/A');
+                    }
+                },
+                onerror: () => resolve('N/A'),
+                ontimeout: () => resolve('N/A')
             });
         });
     }
@@ -4276,50 +4303,97 @@
         return val;
     }
 
+    // Helper: Batch fetch achievement totals from ESGST
+    async function fetchEsgstAchievements(appIds) {
+        if (!appIds || appIds.length === 0) return {};
+
+        const url = `https://esgst.rafaelgomes.xyz/api/games?app_ids=${appIds.join(',')}`;
+
+        try {
+            const res = await fetch(url);
+            const data = await res.json();
+            const results = {};
+
+            const apps = data?.result?.found?.apps;
+
+            if (apps && typeof apps === 'object') {
+                for (const [appId, details] of Object.entries(apps)) {
+                    results[appId] = details?.achievements ?? 0;
+                }
+            }
+
+            return results;
+        } catch (err) {
+            console.warn('Failed to fetch ESGST metadata:', err);
+            return {};
+        }
+    }
+
     async function getSubPlaytime(steamid, subid, useSteamCache) {
         const apps = await getSubAppsCached(subid);
         const result = await getOwnedGamesCachedIDB(steamid, useSteamCache);
 
         const steamGamesMap = result.apps || {};
         let total = 0;
-        let ownedCount = 0;
 
         for (const appid of apps) {
             if (steamGamesMap[appid] !== undefined) {
-                ownedCount++;
                 total += Number(steamGamesMap[appid]) || 0;
             }
         }
 
         // Returns an object containing both total minutes and missing state
-        return {
-            hours: total,
-        };
+        return total;
     }
 
     async function getSubAchievements(steamid, subid, useSteamCache) {
         const apps = await getSubAppsCached(subid);
-        let done = 0;
-        let total = 0;
-
-        // Standard API lookup for owned sub apps
-        for (const appid of apps) {
-            const val = await getAchievementsCachedIDB(steamid, appid, useSteamCache);
-
-            if (typeof val !== 'string' || !val.includes('/')) {
-                continue;
-            }
-
-            const parts = val.split('/').map(Number);
-            if (isNaN(parts[0]) || isNaN(parts[1])) {
-                continue;
-            }
-
-            done += parts[0];
-            total += parts[1];
+        if (!apps || apps.length === 0) {
+            return { ach: 'N/A', isMissing: false };
         }
 
-        return total > 0 ? `${done}/${total}` : 'N/A';
+        let done = 0;
+        let total = 0;
+        let successfulAppsCount = 0;
+
+        // Try fetching Steam achievements for every constituent app in the package
+        for (const appid of apps) {
+            try {
+                const val = await getAchievementsCachedIDB(steamid, appid, useSteamCache);
+
+                if (typeof val === 'string' && val.includes('/')) {
+                    const parts = val.split('/').map(Number);
+                    if (!isNaN(parts[0]) && !isNaN(parts[1])) {
+                        done += parts[0];
+                        total += parts[1];
+                    }
+                }
+                successfulAppsCount++;
+            } catch {
+                // Steam API failed (game is set to private)
+            }
+        }
+
+        // Case 1: At least one app in the package succeeded via Steam API
+        if (successfulAppsCount > 0) {
+            return {
+                ach: total > 0 ? `${done}/${total}` : 'N/A',
+                isMissing: false
+            };
+        }
+
+        // Case 2: ALL apps in the sub package failed -> Mark as Missing & query ESGST
+        const esgstMap = await fetchEsgstAchievements(apps);
+        let esgstTotal = 0;
+
+        for (const appid of apps) {
+            esgstTotal += esgstMap[appid] || 0;
+        }
+
+        return {
+            ach: esgstTotal > 0 ? `0/${esgstTotal}` : 'N/A',
+            isMissing: true
+        };
     }
 
     /************ TABLE ************/
@@ -4392,6 +4466,57 @@
         container.appendChild(btn);
     }
 
+    function getMissingGameCount(results) {
+        if (!Array.isArray(results)) return 0;
+        return results.filter(r => r.isMissing).length;
+    }
+
+    function renderMissingToggleBtn(results, parentEl) {
+        parentEl.querySelector('#toggle-missing-filter')?.remove();
+
+        const missingCount = getMissingGameCount(results);
+        if (missingCount === 0) return;
+
+        const btn = document.createElement('button');
+        btn.id = 'toggle-missing-filter';
+
+        btn.innerText = scanState.showMissingOnly
+            ? `✖ Showing ${missingCount} Private`
+            : `⛔ ${missingCount} Private`;
+
+        btn.title = scanState.showMissingOnly
+            ? 'Click to show all games'
+            : 'Click to filter and show only private games';
+
+        btn.style = `
+            float: right;
+            margin-bottom: 5px;
+            margin-right: 5px;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-weight: bold;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            background: ${scanState.showMissingOnly ? '#ff4c4c' : '#e0a96d'};
+            color: ${scanState.showMissingOnly ? '#ffffff' : '#1b2838'};
+        `;
+
+        btn.onclick = () => {
+            scanState.showMissingOnly = !scanState.showMissingOnly;
+
+            if (scanState.viewMode === 'flat') {
+                renderFlatView();
+            } else if (scanState.activeUser) {
+                render(scanState.userMap[scanState.activeUser]);
+            } else {
+                render(results);
+            }
+        };
+
+        parentEl.appendChild(btn);
+    }
+
     // --- Shared DOM & Toolbar Helpers ---
 
     function createStyledButton(text, title, onClick, styleProps = {}) {
@@ -4459,6 +4584,10 @@
                     ? ' <span title="Whitelist-only giveaway">💙</span>'
                     : '';
 
+                const missingIcon = r.isMissing
+                    ? ' <span title="Game has been marked as private and is assumed to have 0 achievements unlocked">⛔</span>'
+                    : ''
+
                 const lockIcon = ' <span title="Invite-only giveaway">🔒</span>';
 
                 if (r.url) {
@@ -4470,11 +4599,11 @@
 
                     td.appendChild(a);
                     // Append html string for icons with title attributes
-                    td.insertAdjacentHTML('beforeend', wlIcon);
+                    td.insertAdjacentHTML('beforeend', wlIcon + missingIcon);
                 } else {
                     td.innerText = r.name;
                     td.style.color = '#888';
-                    td.insertAdjacentHTML('beforeend', lockIcon);
+                    td.insertAdjacentHTML('beforeend', lockIcon + missingIcon);
                 }
                 break;
             }
@@ -4535,7 +4664,11 @@
     // --- Main Engine to Render Any Results Table ---
 
     function renderResultsTable({ tableId, rawResults, columns }) {
-        const displayResults = rawResults;
+        // 1. Missing Toggle Filter
+        renderMissingToggleBtn(rawResults, resultsWrap);
+        const displayResults = scanState.showMissingOnly
+            ? rawResults.filter(r => r.isMissing)
+            : rawResults;
 
         resultsWrap.style.maxHeight = '70vh';
         resultsWrap.style.overflowY = 'auto';
@@ -4994,20 +5127,31 @@
                 async function processWin(w) {
                     if (w.isSub && w.sub) {
                         try {
-                            const subData = await getSubPlaytime(steamid, w.sub, useSteamCache);
-                            w.hours = subData.hours;
-                            w.ach = await getSubAchievements(steamid, w.sub, useSteamCache);
-                            console.log (`sub name : ${w.name}, sub ach: ${w.ach}`);
+                            w.hours = await getSubPlaytime(steamid, w.sub, useSteamCache);
+
+                            const subAchData = await getSubAchievements(steamid, w.sub, useSteamCache);
+                            w.ach = subAchData.ach;
+                            w.isMissing = subAchData.isMissing;
                         } catch {
                             w.hours = 0;
+                            w.isMissing = true;
                             w.ach = 'N/A';
                         }
                     } else {
                         w.hours = steamGamesMap[w.app] ?? 0;
+
                         try {
+                            // If the game isn't marked private by the user, this succeeds—even for banned/delisted games
                             w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache);
-                        } catch {
-                            w.ach = 'N/A';
+                            w.isMissing = false;
+                        } catch (err) {
+                            // Game is manually hidden/private -> Fall back to ESGST for max achievements schema
+                            w.isMissing = true;
+
+                            const esgstData = await fetchEsgstAchievements([w.app]);
+                            const totalAch = esgstData[w.app] || 0;
+
+                            w.ach = totalAch > 0 ? `0/${totalAch}` : 'N/A';
                         }
                     }
 
