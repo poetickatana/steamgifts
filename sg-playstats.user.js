@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.11.3
+// @version      1.11.4
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -3364,12 +3364,14 @@
                 const hasWhitelist = !!g.whitelist;
                 const wlonly = hasWhitelist && !g.group;
                 const creator = g.creator?.username ? g.creator.username.toLowerCase() : null;
+                const inviteOnly = !!g.invite_only;
 
                 const gid = getGiveawayId({ url, name, ts: endTs });
 
                 newlyScanned.push({
                     gid, name, url, app, sub, isSub: !!sub,
-                    ts: endTs, createdTs, wlonly, hasWhitelist, creator, winners
+                    ts: endTs, createdTs, wlonly, hasWhitelist, creator, winners,
+                    inviteOnly
                 });
             }
 
@@ -3610,6 +3612,8 @@
         scanState.activeUser = null;
 
         clearResults();
+
+        resultsWrap.querySelector('#toggle-missing-filter')?.remove();
 
         const dismissBtn = document.createElement('button');
         dismissBtn.id = 'dismiss-table';
@@ -4472,7 +4476,10 @@
     }
 
     function renderMissingToggleBtn(results, parentEl) {
+
         parentEl.querySelector('#toggle-missing-filter')?.remove();
+
+        if (scanState.viewMode === 'summary') return;
 
         const missingCount = getMissingGameCount(results);
         if (missingCount === 0) return;
@@ -4481,8 +4488,8 @@
         btn.id = 'toggle-missing-filter';
 
         btn.innerText = scanState.showMissingOnly
-            ? `✖ Showing ${missingCount} Private`
-            : `⛔ ${missingCount} Private`;
+            ? `✖ Showing ${missingCount} Missing`
+            : `⛔ ${missingCount} Missing`;
 
         btn.title = scanState.showMissingOnly
             ? 'Click to show all games'
@@ -4585,10 +4592,11 @@
                     : '';
 
                 const missingIcon = r.isMissing
-                    ? ' <span title="Game has been marked as private and is assumed to have 0 achievements unlocked">⛔</span>'
+                    ? ' <span title="Game is missing from user\'s Steam library and counts as unplayed. Possible reasons:\n\n1. Game was never activated.\n2. Game was marked private by the user.\n3. Game key was revoked.\n4. App that was originally activated was replaced by a different version on Steam.">⛔</span>'
                     : ''
 
-                const lockIcon = ' <span title="Invite-only giveaway">🔒</span>';
+                const isInviteOnly = !r.url || !!r.inviteOnly;
+                const lockIcon = isInviteOnly ? ' <span title="Invite-only giveaway">🔒</span>' : '';
 
                 if (r.url) {
                     const a = document.createElement('a');
@@ -4599,7 +4607,7 @@
 
                     td.appendChild(a);
                     // Append html string for icons with title attributes
-                    td.insertAdjacentHTML('beforeend', wlIcon + missingIcon);
+                    td.insertAdjacentHTML('beforeend', lockIcon + wlIcon + missingIcon);
                 } else {
                     td.innerText = r.name;
                     td.style.color = '#888';
@@ -4878,6 +4886,7 @@
                     sub: g.sub,
                     isSub: g.isSub,
                     wlonly: g.wlonly,
+                    inviteOnly: g.inviteOnly,
                     ts: g.ts
                 });
             }
