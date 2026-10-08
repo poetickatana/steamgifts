@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.12.1
+// @version      1.12.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -3822,6 +3822,17 @@
                 filterState.values
             );
 
+            // Update the filter count display
+            const countEl = document.getElementById('sg-summary-table-filter-count');
+            if (countEl) {
+                const total = summary.length;
+                const filtered = filteredSummary.length;
+
+                countEl.textContent = filtered < total
+                    ? `${filtered} of ${total} results`
+                    : `${total} results`;
+            }
+
             // Remove only the existing summary table.
             document.getElementById('sg-summary-table')?.remove();
 
@@ -4858,7 +4869,7 @@
         Object.assign(panel.style, {
             display: state.open ? 'block' : 'none',
             clear: 'both',
-            padding: '10px',
+            padding: '12px 14px',
             margin: '6px 0',
             background: '#202d3a',
             border: '1px solid #444',
@@ -4868,10 +4879,10 @@
         const fields = document.createElement('div');
 
         Object.assign(fields.style, {
-            display: 'flex',
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            gap: '12px 18px'
+            display: 'grid',
+            gridTemplateColumns: 'max-content max-content 1fr',
+            gap: '12px 50px',
+            width: '100%'
         });
 
         for (const def of definitions) {
@@ -4880,16 +4891,36 @@
 
             Object.assign(group.style, {
                 display: 'flex',
-                alignItems: 'center',
-                flexWrap: 'wrap',
-                gap: '5px'
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: '4px',
+                minWidth: '0'
             });
 
-            if (def.type === 'text') {
+            const controls = document.createElement('div');
+
+            Object.assign(controls.style, {
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                height: '24px'
+            });
+
+            if (def.type !== 'checkbox') {
                 const label = document.createElement('span');
                 label.textContent = def.label;
-                group.appendChild(label);
 
+                Object.assign(label.style, {
+                    color: '#d6d7d8',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    opacity: '0.9'
+                });
+
+                group.appendChild(label);
+            }
+
+            if (def.type === 'text') {
                 const nameInput = createFilterInput(
                     'text',
                     value.query ?? '',
@@ -4903,14 +4934,10 @@
                 nameInput.placeholder = 'Search title...';
                 nameInput.style.width = '145px';
 
-                group.appendChild(nameInput);
+                controls.appendChild(nameInput);
             }
 
             if (def.type === 'range') {
-                const label = document.createElement('span');
-                label.textContent = def.label;
-                group.appendChild(label);
-
                 const minInput = createFilterInput(
                     'number',
                     value.min ?? '',
@@ -4923,9 +4950,11 @@
 
                 minInput.min = '0';
                 minInput.placeholder = 'Min';
+                minInput.style.width = '80px';
 
                 const separator = document.createElement('span');
                 separator.textContent = '–';
+                separator.style.opacity = '0.6';
 
                 const maxInput = createFilterInput(
                     'number',
@@ -4939,15 +4968,12 @@
 
                 maxInput.min = '0';
                 maxInput.placeholder = 'Max';
+                maxInput.style.width = '80px';
 
-                group.append(minInput, separator, maxInput);
+                controls.append(minInput, separator, maxInput);
             }
 
             if (def.type === 'date') {
-                const label = document.createElement('span');
-                label.textContent = def.label;
-                group.appendChild(label);
-
                 const fromInput = createFilterInput(
                     'date',
                     value.from ?? '',
@@ -4960,6 +4986,7 @@
 
                 const separator = document.createElement('span');
                 separator.textContent = 'to';
+                separator.style.opacity = '0.6';
 
                 const toInput = createFilterInput(
                     'date',
@@ -4971,16 +4998,36 @@
                     }
                 );
 
-                group.append(fromInput, separator, toInput);
+                fromInput.style.width = '115px';
+                toInput.style.width = '115px';
+                fromInput.style.padding = '2px 4px';
+                toInput.style.padding = '2px 4px';
+
+                controls.append(fromInput, separator, toInput);
             }
 
             if (def.type === 'checkbox') {
+                group.style.justifyContent = 'flex-end';
+                group.style.paddingTop = '16px';
+
                 const label = document.createElement('label');
+
+                Object.assign(label.style, {
+                    display: 'flex',
+                    alignItems: 'center',
+                    color: '#d6d7d8',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap'
+                });
+
                 const checkbox = document.createElement('input');
 
                 checkbox.type = 'checkbox';
                 checkbox.checked = !!value.checked;
-                checkbox.style.marginRight = '5px';
+                checkbox.style.marginRight = '6px';
+                checkbox.style.cursor = 'pointer';
 
                 checkbox.addEventListener('change', () => {
                     state.values[def.key] ??= {};
@@ -4988,10 +5035,15 @@
                     onChange();
                 });
 
-                label.append(checkbox, document.createTextNode(def.label));
-                group.appendChild(label);
+                label.append(
+                    checkbox,
+                    document.createTextNode(def.label)
+                );
+
+                controls.appendChild(label);
             }
 
+            group.appendChild(controls);
             fields.appendChild(group);
         }
 
@@ -5003,7 +5055,9 @@
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            marginTop: '10px',
+            marginTop: '12px',
+            paddingTop: '8px',
+            borderTop: '1px solid #34414d',
             gap: '10px'
         });
 
@@ -5018,7 +5072,6 @@
             () => {
                 state.values = {};
 
-                // Reset the actual filter controls in the UI
                 panel.querySelectorAll('input').forEach(input => {
                     if (input.type === 'checkbox') {
                         input.checked = false;
@@ -5053,6 +5106,12 @@
             getValue: getGiveawayDate
         },
         {
+            key: 'whitelistOnly',
+            label: 'Whitelist-only',
+            type: 'checkbox',
+            test: r => !!r.wlonly
+        },
+        {
             key: 'completion',
             label: 'Comp %',
             type: 'range',
@@ -5066,12 +5125,6 @@
                 r.hours !== undefined
                     ? Number(r.hours) / 60
                     : 0
-        },
-        {
-            key: 'whitelistOnly',
-            label: 'Whitelist-only',
-            type: 'checkbox',
-            test: r => !!r.wlonly
         },
         {
             key: 'inviteOnly',
