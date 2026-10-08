@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.11.4
+// @version      1.12.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -3598,7 +3598,15 @@
             '#flat-view',
             '#winners-view',
             '#back-to-summary',
-            '.sg-back-to-top'
+            '#toggle-missing-filter',
+            '.sg-back-to-top',
+
+            // Summary filter UI
+            '#sg-summary-filter-wrap',
+
+            // Generic table filter UI
+            '[id$="-filter-toggle"]',
+            '[id$="-filter-panel"]'
         ];
 
         elementsToRemove.forEach(sel => {
@@ -3606,14 +3614,103 @@
         });
     }
 
+    function hasActiveFilters(tableId) {
+        const state = getFilterState(tableId);
+
+        return Object.values(state.values).some(value => {
+            if (!value) return false;
+
+            // Text input check (Game name)
+            if (typeof value.query === 'string' && value.query.trim() !== '') return true;
+
+            // Checkbox check
+            if (value.checked) return true;
+
+            // Range checks
+            if (value.min !== '' && value.min != null) return true;
+            if (value.max !== '' && value.max != null) return true;
+
+            // Date checks
+            if (value.from) return true;
+            if (value.to) return true;
+
+            return false;
+        });
+    }
+
+    function updateFilterButton(button, tableId) {
+        const state = getFilterState(tableId);
+        const active = hasActiveFilters(tableId);
+
+        const label = state.open
+            ? '🔍 Hide Filters'
+            : '🔍 Filters';
+
+        button.innerText = active
+            ? `${label}`
+            : label;
+
+        Object.assign(button.style, {
+            background: active ? '#2fae55' : '#2a475e'
+        });
+    }
+
+    const SUMMARY_FILTERS = [
+        {
+            key: 'wins',
+            label: 'Wins',
+            type: 'range',
+            getValue: u => {
+                if (!(u.eligible > 0)) return null;
+                return Number(u.gamesWon);
+            }
+        },
+        {
+            key: 'started',
+            label: '% Started',
+            type: 'range',
+            getValue: u => {
+                if (!(u.eligible > 0)) return null;
+                return Number(u.pctAnyCompletion);
+            }
+        },
+        {
+            key: 'played',
+            label: '% Played',
+            type: 'range',
+            getValue: u => {
+                if (!(u.eligible > 0)) return null;
+                return Number(u.pct25Completion);
+            }
+        },
+        {
+            key: 'compPct',
+            label: 'Avg %',
+            type: 'range',
+            getValue: u => {
+                if (!(u.eligible > 0)) return null;
+                return Number(u.compPct);
+            }
+        },
+        {
+            key: 'playtime',
+            label: 'Playtime',
+            type: 'range',
+            getValue: u => {
+                if (!(u.eligible > 0)) return null;
+                return Number(u.totalHours);
+            }
+        }
+    ];
+
     /************ RENDER SUMMARY ************/
-    function renderSummary(summary, membersSet = new Set()) {
+    function renderSummary(summary, membersSet = new Set(), preserveFilters = true) {
         scanState.viewMode = 'summary';
         scanState.activeUser = null;
 
         clearResults();
 
-        resultsWrap.querySelector('#toggle-missing-filter')?.remove();
+        resultsWrap.querySelector('#sg-summary-filter-wrap')?.remove();
 
         const dismissBtn = document.createElement('button');
         dismissBtn.id = 'dismiss-table';
@@ -3675,203 +3772,259 @@
         };
         resultsWrap.appendChild(flatViewBtn);
 
-        // 1. CALCULATE GLOBAL TOTALS
-        const totals = {
-            wins: 0,
-            eligible: 0,
-            any: 0,
-            twentyFive: 0,
-            fifty: 0,
-            seventyFive: 0,
-            hundred: 0,
-            hours: 0,
-            anyHoursWins: 0,
-            usersWithPlaytime: 0,
-            unlocked: 0,
-            available: 0
-        };
+        // Summary filters
+        const filterState = getFilterState('sg-summary-table');
 
-        summary.forEach(u => {
-            totals.wins += u.gamesWon || 0;
-            totals.eligible += u.eligible || 0;
-            totals.any += u.gamesAnyCompletion || 0;
-            totals.twentyFive += u.games25Completion || 0;
-            totals.fifty += u.games50Completion || 0;
-            totals.seventyFive += u.games75Completion || 0;
-            totals.hundred += u.games100Completion || 0;
-            totals.hours += u.totalHours || 0;
-            totals.anyHoursWins += u.anyHours || 0;
-            if (u.totalHours > 0) totals.usersWithPlaytime++;
-            totals.unlocked += (u.totalUnlocked || 0);
-            totals.available += (u.totalAvailable || 0);
+        const filterBtn = createStyledButton(
+            filterState.open ? '🔍 Hide Filters' : '🔍 Filters',
+            'Show or hide summary filters',
+            () => {
+                filterState.open = !filterState.open;
+
+                updateFilterButton(filterBtn, 'sg-summary-table');
+
+                filterPanel.style.display =
+                    filterState.open ? 'block' : 'none';
+            },
+            { marginRight: '5px' }
+        );
+
+        filterBtn.id = 'sg-summary-filter-toggle';
+
+        updateFilterButton(filterBtn, 'sg-summary-table');
+
+        resultsWrap.appendChild(filterBtn);
+
+        const filterWrap = document.createElement('div');
+        filterWrap.id = 'sg-summary-filter-wrap';
+
+        filterWrap.appendChild(filterBtn);
+
+        const filterPanel = createFilterPanel({
+            tableId: 'sg-summary-table',
+            definitions: SUMMARY_FILTERS,
+            rawResults: summary,
+            onChange: () => {
+                renderSummaryTable();
+                updateFilterButton(filterBtn, 'sg-summary-table');
+            }
         });
 
-        const avg = {
-            pctAny: totals.eligible ? (Math.round((totals.any / totals.eligible) * 1000) / 10) : 0,
-            pct25: totals.eligible ? (Math.round((totals.twentyFive / totals.eligible) * 1000) / 10) : 0,
-            pct50: totals.eligible ? (Math.round((totals.fifty / totals.eligible) * 1000) / 10) : 0,
-            pct75: totals.eligible ? (Math.round((totals.seventyFive / totals.eligible) * 1000) / 10) : 0,
-            pct100: totals.eligible ? (Math.round((totals.hundred / totals.eligible) * 1000) / 10) : 0,
-            pctComp: totals.available ? (Math.round((totals.unlocked / totals.available) * 1000) / 10) : 0,
-            perPlayedWin: totals.anyHoursWins ? (totals.hours / totals.anyHoursWins) : 0
-        };
+        filterWrap.appendChild(filterPanel);
+        resultsWrap.appendChild(filterWrap);
 
-        const table = document.createElement('table');
-        table.id = 'sg-summary-table';
+        function renderSummaryTable() {
+            const filterState = getFilterState('sg-summary-table');
 
-        // 2. CONSTRUCT COLGROUP BASED ON SETTING
-        const colgroup = document.createElement('colgroup');
-        if (showExtendedStatsON) {
-            colgroup.innerHTML = `
-                <col style="width: 19%">
-                <col style="width: 7%">
-                <col style="width: 11%">
-                <col style="width: 11%">
-                <col style="width: 11%">
-                <col style="width: 11%">
-                <col style="width: 11%">
-                <col style="width: 9%">
-                <col style="width: 10%">
-            `;
-        } else {
-            colgroup.innerHTML = `
-                <col style="width: 21%">
-                <col style="width: 10%">
-                <col style="width: 15%">
-                <col style="width: 15%">
-                <col style="width: 15%">
-                <col style="width: 12%">
-                <col style="width: 12%">
-            `;
-        }
-        table.appendChild(colgroup);
+            const filteredSummary = applyResultFilters(
+                summary,
+                SUMMARY_FILTERS,
+                filterState.values
+            );
 
-        // 3. CONSTRUCT HEADERS AND STICKY AVG ROW
-        const headers = showExtendedStatsON
-            ? ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Played+<br>(>50%🏆)', '% Played++<br>(>75%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime']
-            : ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
+            // Remove only the existing summary table.
+            document.getElementById('sg-summary-table')?.remove();
 
-        const thead = document.createElement('thead');
+            // 1. CALCULATE GLOBAL TOTALS
+            const totals = {
+                wins: 0,
+                eligible: 0,
+                any: 0,
+                twentyFive: 0,
+                fifty: 0,
+                seventyFive: 0,
+                hundred: 0,
+                hours: 0,
+                anyHoursWins: 0,
+                usersWithPlaytime: 0,
+                unlocked: 0,
+                available: 0
+            };
 
-        const trAvg = document.createElement('tr');
-        trAvg.className = 'sticky-avg';
-
-        if (showExtendedStatsON) {
-            trAvg.innerHTML = `
-                <td>GLOBAL SUMMARY</td>
-                <td>${totals.wins}</td>
-                <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
-                <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
-                <td>${avg.pct50}% <small>(${totals.fifty}/${totals.eligible})</small></td>
-                <td>${avg.pct75}% <small>(${totals.seventyFive}/${totals.eligible})</small></td>
-                <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
-                <td>${avg.pctComp}%</td>
-                <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
-            `;
-        } else {
-            trAvg.innerHTML = `
-                <td>GLOBAL SUMMARY</td>
-                <td>${totals.wins}</td>
-                <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
-                <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
-                <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
-                <td>${avg.pctComp}%</td>
-                <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
-            `;
-        }
-        thead.appendChild(trAvg);
-
-        const avgHeight = trAvg.offsetHeight || 30;
-
-        const trHead = document.createElement('tr');
-        trHead.className = 'sticky-header';
-        headers.forEach((h, i) => {
-            const th = document.createElement('th');
-            th.innerHTML = h;
-            th.style.top = `${avgHeight}px`;
-            th.onclick = () => sortTable(table, i);
-            trHead.appendChild(th);
-        });
-
-        thead.appendChild(trHead);
-        table.appendChild(thead);
-
-        // 4. CONSTRUCT BODY ROWS
-        const tbody = document.createElement('tbody');
-
-        const cols = showExtendedStatsON
-            ? ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct50Completion', 'pct75Completion', 'pct100Completion', 'compPct', 'totalHours']
-            : ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct100Completion', 'compPct', 'totalHours'];
-
-        summary.forEach(u => {
-            const tr = document.createElement('tr');
-
-            // User Column
-            const tdUser = document.createElement('td');
-            const a = document.createElement('a');
-            a.href = '#';
-            a.onclick = (e) => { e.preventDefault(); showUserDetail(u.username); };
-            a.innerText = scanState.userDisplay[u.username] ?? u.username;
-            tdUser.appendChild(a);
-            tr.appendChild(tdUser);
-
-            // Data Columns
-            cols.forEach((c) => {
-                const td = document.createElement('td');
-
-                const isPrivateUser = !!scanState.userPrivate[u.username];
-                const isWinCol = c === 'gamesWon';
-                const hasEligibleGames = u.eligible > 0;
-
-                td.dataset.value = (isPrivateUser && !isWinCol) ? -1 : (u[c] ?? -1);
-
-                const lockSpan = '<span title="User\'s Steam profile or game stats are private">🔒</span>';
-                let display = (isPrivateUser && !isWinCol) ? lockSpan : (u[c] ?? 0);
-
-                if (!isPrivateUser || isWinCol) {
-                    if (c === 'totalHours') {
-                        display = Number(display).toFixed(1);
-                    }
-                    else if (c === 'pctAnyCompletion') {
-                        const val = hasEligibleGames ? `${u.pctAnyCompletion}%` : 'N/A';
-                        display = `${val} <small style="opacity:0.7">(${u.gamesAnyCompletion}/${u.eligible})</small>`;
-                    }
-                    else if (c === 'pct25Completion') {
-                        const val = hasEligibleGames ? `${u.pct25Completion}%` : 'N/A';
-                        display = `${val} <small style="opacity:0.7">(${u.games25Completion}/${u.eligible})</small>`;
-                    }
-                    else if (c === 'pct50Completion') {
-                        const val = hasEligibleGames ? `${u.pct50Completion}%` : 'N/A';
-                        display = `${val} <small style="opacity:0.7">(${u.games50Completion}/${u.eligible})</small>`;
-                    }
-                    else if (c === 'pct75Completion') {
-                        const val = hasEligibleGames ? `${u.pct75Completion}%` : 'N/A';
-                        display = `${val} <small style="opacity:0.7">(${u.games75Completion}/${u.eligible})</small>`;
-                    }
-                    else if (c === 'pct100Completion') {
-                        const val = hasEligibleGames ? `${u.pct100Completion}%` : 'N/A';
-                        display = `${val} <small style="opacity:0.7">(${u.games100Completion}/${u.eligible})</small>`;
-                    }
-                    else if (c === 'compPct') {
-                        display = hasEligibleGames ? `${display}%` : 'N/A';
-                    }
-                }
-
-                td.innerHTML = display;
-                tr.appendChild(td);
+            filteredSummary.forEach(u => {
+                totals.wins += u.gamesWon || 0;
+                totals.eligible += u.eligible || 0;
+                totals.any += u.gamesAnyCompletion || 0;
+                totals.twentyFive += u.games25Completion || 0;
+                totals.fifty += u.games50Completion || 0;
+                totals.seventyFive += u.games75Completion || 0;
+                totals.hundred += u.games100Completion || 0;
+                totals.hours += u.totalHours || 0;
+                totals.anyHoursWins += u.anyHours || 0;
+                if (u.totalHours > 0) totals.usersWithPlaytime++;
+                totals.unlocked += (u.totalUnlocked || 0);
+                totals.available += (u.totalAvailable || 0);
             });
 
-            tbody.appendChild(tr);
-        });
-        table.appendChild(tbody);
-        resultsWrap.appendChild(table);
+            const avg = {
+                pctAny: totals.eligible ? (Math.round((totals.any / totals.eligible) * 1000) / 10) : 0,
+                pct25: totals.eligible ? (Math.round((totals.twentyFive / totals.eligible) * 1000) / 10) : 0,
+                pct50: totals.eligible ? (Math.round((totals.fifty / totals.eligible) * 1000) / 10) : 0,
+                pct75: totals.eligible ? (Math.round((totals.seventyFive / totals.eligible) * 1000) / 10) : 0,
+                pct100: totals.eligible ? (Math.round((totals.hundred / totals.eligible) * 1000) / 10) : 0,
+                pctComp: totals.available ? (Math.round((totals.unlocked / totals.available) * 1000) / 10) : 0,
+                perPlayedWin: totals.anyHoursWins ? (totals.hours / totals.anyHoursWins) : 0
+            };
 
-        attachBackToTop(resultsWrap);
+            const table = document.createElement('table');
+            table.id = 'sg-summary-table';
 
-        if (typeof summarySort !== 'undefined' && summarySort.col !== null) {
-            sortTable(table, summarySort.col, summarySort.asc);
+            // 2. CONSTRUCT COLGROUP BASED ON SETTING
+            const colgroup = document.createElement('colgroup');
+            if (showExtendedStatsON) {
+                colgroup.innerHTML = `
+                    <col style="width: 19%">
+                    <col style="width: 7%">
+                    <col style="width: 11%">
+                    <col style="width: 11%">
+                    <col style="width: 11%">
+                    <col style="width: 11%">
+                    <col style="width: 11%">
+                    <col style="width: 9%">
+                    <col style="width: 10%">
+                `;
+            } else {
+                colgroup.innerHTML = `
+                    <col style="width: 21%">
+                    <col style="width: 10%">
+                    <col style="width: 15%">
+                    <col style="width: 15%">
+                    <col style="width: 15%">
+                    <col style="width: 12%">
+                    <col style="width: 12%">
+                `;
+            }
+            table.appendChild(colgroup);
+
+            // 3. CONSTRUCT HEADERS AND STICKY AVG ROW
+            const headers = showExtendedStatsON
+                ? ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Played+<br>(>50%🏆)', '% Played++<br>(>75%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime']
+                : ['User', 'Wins', '% Started<br>(>0🏆)', '% Played<br>(>25%🏆)', '% Complete<br>(100%🏆)', 'Avg 🏆 %', 'Playtime'];
+
+            const thead = document.createElement('thead');
+
+            const trAvg = document.createElement('tr');
+            trAvg.className = 'sticky-avg';
+
+            if (showExtendedStatsON) {
+                trAvg.innerHTML = `
+                    <td>GLOBAL SUMMARY</td>
+                    <td>${totals.wins}</td>
+                    <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
+                    <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
+                    <td>${avg.pct50}% <small>(${totals.fifty}/${totals.eligible})</small></td>
+                    <td>${avg.pct75}% <small>(${totals.seventyFive}/${totals.eligible})</small></td>
+                    <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
+                    <td>${avg.pctComp}%</td>
+                    <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
+                `;
+            } else {
+                trAvg.innerHTML = `
+                    <td>GLOBAL SUMMARY</td>
+                    <td>${totals.wins}</td>
+                    <td>${avg.pctAny}% <small>(${totals.any}/${totals.eligible})</small></td>
+                    <td>${avg.pct25}% <small>(${totals.twentyFive}/${totals.eligible})</small></td>
+                    <td>${avg.pct100}% <small>(${totals.hundred}/${totals.eligible})</small></td>
+                    <td>${avg.pctComp}%</td>
+                    <td><div title="Average hours per played win">Avg: ${avg.perPlayedWin.toFixed(1)}h</div></td>
+                `;
+            }
+            thead.appendChild(trAvg);
+
+            const avgHeight = trAvg.offsetHeight || 30;
+
+            const trHead = document.createElement('tr');
+            trHead.className = 'sticky-header';
+            headers.forEach((h, i) => {
+                const th = document.createElement('th');
+                th.innerHTML = h;
+                th.style.top = `${avgHeight}px`;
+                th.onclick = () => sortTable(table, i);
+                trHead.appendChild(th);
+            });
+
+            thead.appendChild(trHead);
+            table.appendChild(thead);
+
+            // 4. CONSTRUCT BODY ROWS
+            const tbody = document.createElement('tbody');
+
+            const cols = showExtendedStatsON
+                ? ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct50Completion', 'pct75Completion', 'pct100Completion', 'compPct', 'totalHours']
+                : ['gamesWon', 'pctAnyCompletion', 'pct25Completion', 'pct100Completion', 'compPct', 'totalHours'];
+
+            filteredSummary.forEach(u => {
+                const tr = document.createElement('tr');
+
+                // User Column
+                const tdUser = document.createElement('td');
+                const a = document.createElement('a');
+                a.href = '#';
+                a.onclick = (e) => { e.preventDefault(); showUserDetail(u.username); };
+                a.innerText = scanState.userDisplay[u.username] ?? u.username;
+                tdUser.appendChild(a);
+                tr.appendChild(tdUser);
+
+                // Data Columns
+                cols.forEach((c) => {
+                    const td = document.createElement('td');
+
+                    const isPrivateUser = !!scanState.userPrivate[u.username];
+                    const isWinCol = c === 'gamesWon';
+                    const hasEligibleGames = u.eligible > 0;
+
+                    td.dataset.value = (isPrivateUser && !isWinCol) ? -1 : (u[c] ?? -1);
+
+                    const lockSpan = '<span title="User\'s Steam profile or game stats are private">🔒</span>';
+                    let display = (isPrivateUser && !isWinCol) ? lockSpan : (u[c] ?? 0);
+
+                    if (!isPrivateUser || isWinCol) {
+                        if (c === 'totalHours') {
+                            display = Number(display).toFixed(1);
+                        }
+                        else if (c === 'pctAnyCompletion') {
+                            const val = hasEligibleGames ? `${u.pctAnyCompletion}%` : 'N/A';
+                            display = `${val} <small style="opacity:0.7">(${u.gamesAnyCompletion}/${u.eligible})</small>`;
+                        }
+                        else if (c === 'pct25Completion') {
+                            const val = hasEligibleGames ? `${u.pct25Completion}%` : 'N/A';
+                            display = `${val} <small style="opacity:0.7">(${u.games25Completion}/${u.eligible})</small>`;
+                        }
+                        else if (c === 'pct50Completion') {
+                            const val = hasEligibleGames ? `${u.pct50Completion}%` : 'N/A';
+                            display = `${val} <small style="opacity:0.7">(${u.games50Completion}/${u.eligible})</small>`;
+                        }
+                        else if (c === 'pct75Completion') {
+                            const val = hasEligibleGames ? `${u.pct75Completion}%` : 'N/A';
+                            display = `${val} <small style="opacity:0.7">(${u.games75Completion}/${u.eligible})</small>`;
+                        }
+                        else if (c === 'pct100Completion') {
+                            const val = hasEligibleGames ? `${u.pct100Completion}%` : 'N/A';
+                            display = `${val} <small style="opacity:0.7">(${u.games100Completion}/${u.eligible})</small>`;
+                        }
+                        else if (c === 'compPct') {
+                            display = hasEligibleGames ? `${display}%` : 'N/A';
+                        }
+                    }
+
+                    td.innerHTML = display;
+                    tr.appendChild(td);
+                });
+
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            resultsWrap.appendChild(table);
+
+            attachBackToTop(resultsWrap);
+
+            if (typeof summarySort !== 'undefined' && summarySort.col !== null) {
+                sortTable(table, summarySort.col, summarySort.asc);
+            }
+            if (typeof saveScanState === 'function') saveScanState();
         }
-        if (typeof saveScanState === 'function') saveScanState();
+
+        renderSummaryTable();
     }
 
     /***********************
@@ -4573,6 +4726,363 @@
         resultsWrap.appendChild(csvBtn);
     }
 
+
+    const tableFilterState = {};
+
+    function getCompletionPct(r) {
+        if (!r.ach || !r.ach.includes('/')) return null;
+
+        const [done, total] = r.ach.split('/').map(Number);
+
+        if (!Number.isFinite(done) || !Number.isFinite(total) || total <= 0) {
+            return null;
+        }
+
+        return (done / total) * 100;
+    }
+
+    function getGiveawayDate(r) {
+        if (!r.ts) return null;
+
+        const date = new Date(Number(r.ts) * 1000);
+
+        if (!Number.isFinite(date.getTime())) return null;
+
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+
+        return `${year}-${month}-${day}`;
+    }
+
+    function getFilterState(tableId) {
+        if (!tableFilterState[tableId]) {
+            tableFilterState[tableId] = {
+                open: false,
+                values: {}
+            };
+        }
+
+        return tableFilterState[tableId];
+    }
+
+    function applyResultFilters(results, definitions, values) {
+        return results.filter(r => {
+            for (const def of definitions) {
+                const value = values[def.key] || {};
+
+                if (def.type === 'text') {
+                    const query = (value.query || '').trim().toLowerCase();
+                    if (query) {
+                        const actual = String(def.getValue(r) || '').toLowerCase();
+                        if (!actual.includes(query)) return false;
+                    }
+                }
+
+                if (def.type === 'range') {
+                    const actual = def.getValue(r);
+
+                    // Unknown values do not match an active range.
+                    if (actual === null || !Number.isFinite(actual)) {
+                        if (value.min !== '' && value.min != null) return false;
+                        if (value.max !== '' && value.max != null) return false;
+                        continue;
+                    }
+
+                    if (value.min !== '' && value.min != null &&
+                        actual < Number(value.min)) {
+                        return false;
+                    }
+
+                    if (value.max !== '' && value.max != null &&
+                        actual > Number(value.max)) {
+                        return false;
+                    }
+                }
+
+                if (def.type === 'date') {
+                    const actual = def.getValue(r);
+
+                    if (!actual) {
+                        if (value.from || value.to) return false;
+                        continue;
+                    }
+
+                    if (value.from && actual < value.from) return false;
+                    if (value.to && actual > value.to) return false;
+                }
+
+                if (def.type === 'checkbox' && value.checked) {
+                    if (!def.test(r)) return false;
+                }
+            }
+
+            return true;
+        });
+    }
+
+    function createFilterInput(type, value, onChange) {
+        const input = document.createElement('input');
+        input.type = type;
+        input.value = value ?? '';
+
+        Object.assign(input.style, {
+            boxSizing: 'border-box',
+            width: type === 'date' ? '145px' : '75px',
+            height: '24px',
+            padding: '2px 5px',
+            background: '#3a3a3a',
+            border: '1px solid #555',
+            borderRadius: '3px',
+            color: '#ddd'
+        });
+
+        // Use 'input' for text searching so it filters immediately as you type
+        const eventType = type === 'text' ? 'input' : 'change';
+        input.addEventListener(eventType, () => onChange(input.value));
+
+        return input;
+    }
+
+    function createFilterPanel({
+        tableId,
+        definitions,
+        rawResults,
+        onChange
+    }) {
+        const state = getFilterState(tableId);
+
+        const panel = document.createElement('div');
+        panel.id = `${tableId}-filter-panel`;
+
+        Object.assign(panel.style, {
+            display: state.open ? 'block' : 'none',
+            clear: 'both',
+            padding: '10px',
+            margin: '6px 0',
+            background: '#202d3a',
+            border: '1px solid #444',
+            borderRadius: '4px'
+        });
+
+        const fields = document.createElement('div');
+
+        Object.assign(fields.style, {
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            gap: '12px 18px'
+        });
+
+        for (const def of definitions) {
+            const value = state.values[def.key] ?? {};
+            const group = document.createElement('div');
+
+            Object.assign(group.style, {
+                display: 'flex',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '5px'
+            });
+
+            if (def.type === 'text') {
+                const label = document.createElement('span');
+                label.textContent = def.label;
+                group.appendChild(label);
+
+                const nameInput = createFilterInput(
+                    'text',
+                    value.query ?? '',
+                    next => {
+                        state.values[def.key] ??= {};
+                        state.values[def.key].query = next;
+                        onChange();
+                    }
+                );
+
+                nameInput.placeholder = 'Search title...';
+                nameInput.style.width = '145px';
+
+                group.appendChild(nameInput);
+            }
+
+            if (def.type === 'range') {
+                const label = document.createElement('span');
+                label.textContent = def.label;
+                group.appendChild(label);
+
+                const minInput = createFilterInput(
+                    'number',
+                    value.min ?? '',
+                    next => {
+                        state.values[def.key] ??= {};
+                        state.values[def.key].min = next;
+                        onChange();
+                    }
+                );
+
+                minInput.min = '0';
+                minInput.placeholder = 'Min';
+
+                const separator = document.createElement('span');
+                separator.textContent = '–';
+
+                const maxInput = createFilterInput(
+                    'number',
+                    value.max ?? '',
+                    next => {
+                        state.values[def.key] ??= {};
+                        state.values[def.key].max = next;
+                        onChange();
+                    }
+                );
+
+                maxInput.min = '0';
+                maxInput.placeholder = 'Max';
+
+                group.append(minInput, separator, maxInput);
+            }
+
+            if (def.type === 'date') {
+                const label = document.createElement('span');
+                label.textContent = def.label;
+                group.appendChild(label);
+
+                const fromInput = createFilterInput(
+                    'date',
+                    value.from ?? '',
+                    next => {
+                        state.values[def.key] ??= {};
+                        state.values[def.key].from = next;
+                        onChange();
+                    }
+                );
+
+                const separator = document.createElement('span');
+                separator.textContent = 'to';
+
+                const toInput = createFilterInput(
+                    'date',
+                    value.to ?? '',
+                    next => {
+                        state.values[def.key] ??= {};
+                        state.values[def.key].to = next;
+                        onChange();
+                    }
+                );
+
+                group.append(fromInput, separator, toInput);
+            }
+
+            if (def.type === 'checkbox') {
+                const label = document.createElement('label');
+                const checkbox = document.createElement('input');
+
+                checkbox.type = 'checkbox';
+                checkbox.checked = !!value.checked;
+                checkbox.style.marginRight = '5px';
+
+                checkbox.addEventListener('change', () => {
+                    state.values[def.key] ??= {};
+                    state.values[def.key].checked = checkbox.checked;
+                    onChange();
+                });
+
+                label.append(checkbox, document.createTextNode(def.label));
+                group.appendChild(label);
+            }
+
+            fields.appendChild(group);
+        }
+
+        panel.appendChild(fields);
+
+        const footer = document.createElement('div');
+
+        Object.assign(footer.style, {
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginTop: '10px',
+            gap: '10px'
+        });
+
+        const count = document.createElement('span');
+        count.id = `${tableId}-filter-count`;
+        count.style.color = '#aaa';
+        count.textContent = `${rawResults.length} results`;
+
+        const resetBtn = createStyledButton(
+            'Reset Filters',
+            'Clear all filters for this table',
+            () => {
+                state.values = {};
+
+                // Reset the actual filter controls in the UI
+                panel.querySelectorAll('input').forEach(input => {
+                    if (input.type === 'checkbox') {
+                        input.checked = false;
+                    } else {
+                        input.value = '';
+                    }
+                });
+
+                onChange();
+            },
+            { float: 'none', marginBottom: '0' }
+        );
+
+        footer.append(count, resetBtn);
+        panel.appendChild(footer);
+
+        return panel;
+    }
+
+
+    const USER_GIVEAWAY_FILTERS = [
+        {
+            key: 'name',
+            label: 'Game',
+            type: 'text',
+            getValue: r => r.name
+        },
+        {
+            key: 'date',
+            label: 'Date',
+            type: 'date',
+            getValue: getGiveawayDate
+        },
+        {
+            key: 'completion',
+            label: 'Comp %',
+            type: 'range',
+            getValue: getCompletionPct
+        },
+        {
+            key: 'hours',
+            label: 'Hours',
+            type: 'range',
+            getValue: r =>
+                r.hours !== undefined
+                    ? Number(r.hours) / 60
+                    : 0
+        },
+        {
+            key: 'whitelistOnly',
+            label: 'Whitelist-only',
+            type: 'checkbox',
+            test: r => !!r.wlonly
+        },
+        {
+            key: 'inviteOnly',
+            label: 'Invite-only',
+            type: 'checkbox',
+            test: r => !r.url || !!r.inviteOnly
+        }
+    ];
+
+    const FLAT_GIVEAWAY_FILTERS = USER_GIVEAWAY_FILTERS;
+
     // --- Shared Table Cell Formatters ---
 
     function buildTableCell(r, type) {
@@ -4671,51 +5181,137 @@
 
     // --- Main Engine to Render Any Results Table ---
 
-    function renderResultsTable({ tableId, rawResults, columns }) {
-        // 1. Missing Toggle Filter
+
+    function renderResultsTable({
+        tableId,
+        rawResults,
+        columns,
+        filterDefinitions = []
+    }) {
         renderMissingToggleBtn(rawResults, resultsWrap);
-        const displayResults = scanState.showMissingOnly
-            ? rawResults.filter(r => r.isMissing)
-            : rawResults;
 
         resultsWrap.style.maxHeight = '70vh';
         resultsWrap.style.overflowY = 'auto';
 
-        // 2. Table Creation
+        const state = getFilterState(tableId);
+        let filterBtn = null;
+
+        // Filter toggle button
+        if (filterDefinitions.length) {
+            filterBtn = createStyledButton(
+                state.open ? '🔍 Hide Filters' : '🔍 Filters',
+                'Show or hide table filters',
+                () => {
+                    state.open = !state.open;
+
+                    filterBtn.innerText = state.open
+                        ? '🔍 Hide Filters'
+                        : '🔍 Filters';
+
+                    panel.style.display = state.open ? 'block' : 'none';
+
+                    updateFilterButton(filterBtn, tableId);
+                },
+                { marginRight: '5px' }
+            );
+
+            filterBtn.id = `${tableId}-filter-toggle`;
+
+            updateFilterButton(filterBtn, tableId);
+
+            resultsWrap.appendChild(filterBtn);
+
+            const panel = createFilterPanel({
+                tableId,
+                definitions: filterDefinitions,
+                rawResults,
+                onChange: () => {
+                    updateTable();
+                    updateFilterButton(filterBtn, tableId);
+                }
+            });
+
+            resultsWrap.appendChild(panel);
+        }
+
+        // Table
         const table = document.createElement('table');
         table.id = tableId;
-        table.style = 'width: 100%; margin-top: 5px; border-collapse: collapse; table-layout: fixed; text-align: center; white-space: nowrap;';
 
-        // 3. Colgroup
+        table.style =
+            'width: 100%; margin-top: 5px; border-collapse: collapse; ' +
+            'table-layout: fixed; text-align: center; white-space: nowrap;';
+
         const colgroup = document.createElement('colgroup');
-        colgroup.innerHTML = columns.map(c => `<col style="width: ${c.width}">`).join('');
+        colgroup.innerHTML = columns
+            .map(c => `<col style="width: ${c.width}">`)
+            .join('');
+
         table.appendChild(colgroup);
 
-        // 4. Headers
+        // Headers
         const thead = document.createElement('thead');
         const trHead = document.createElement('tr');
+
         columns.forEach((col, i) => {
             const th = document.createElement('th');
             th.innerText = col.label;
-            th.style = 'cursor: pointer; padding: 6px; background: #2a475e; color: #fff; border: 1px solid #444;';
+            th.style =
+                'cursor: pointer; padding: 6px; background: #2a475e; ' +
+                'color: #fff; border: 1px solid #444;';
+
             th.onclick = () => sortTable(table, i);
+
             trHead.appendChild(th);
         });
+
         thead.appendChild(trHead);
         table.appendChild(thead);
 
-        // 5. Rows
         const tbody = document.createElement('tbody');
-        displayResults.forEach(r => {
-            const tr = document.createElement('tr');
-            columns.forEach(col => {
-                tr.appendChild(buildTableCell(r, col.type));
-            });
-            tbody.appendChild(tr);
-        });
-
         table.appendChild(tbody);
         resultsWrap.appendChild(table);
+
+        function updateTable() {
+            let displayResults = rawResults;
+
+            // Preserve the existing Missing-only toggle.
+            if (scanState.showMissingOnly) {
+                displayResults = displayResults.filter(r => r.isMissing);
+            }
+
+            // Apply the new filters.
+            if (filterDefinitions.length) {
+                displayResults = applyResultFilters(
+                    displayResults,
+                    filterDefinitions,
+                    state.values
+                );
+            }
+
+            tbody.replaceChildren();
+
+            displayResults.forEach(r => {
+                const tr = document.createElement('tr');
+
+                columns.forEach(col => {
+                    tr.appendChild(buildTableCell(r, col.type));
+                });
+
+                tbody.appendChild(tr);
+            });
+
+            const count = document.getElementById(
+                `${tableId}-filter-count`
+            );
+
+            if (count) {
+                count.textContent =
+                    `${displayResults.length} of ${rawResults.length} results`;
+            }
+        }
+
+        updateTable();
         attachBackToTop(resultsWrap);
     }
 
@@ -4746,7 +5342,8 @@
                 { label: 'Achievements', type: 'achievements', width: '15%' },
                 { label: 'Completion %', type: 'completion', width: '15%' },
                 { label: 'Hours', type: 'hours', width: '10%' }
-            ]
+            ],
+            filterDefinitions: USER_GIVEAWAY_FILTERS
         });
     }
 
@@ -4775,7 +5372,8 @@
                 { label: 'Achievements', type: 'achievements', width: '13%' },
                 { label: 'Comp %', type: 'completion', width: '12%' },
                 { label: 'Hours', type: 'hours', width: '10%' }
-            ]
+            ],
+            filterDefinitions: FLAT_GIVEAWAY_FILTERS
         });
     }
 
