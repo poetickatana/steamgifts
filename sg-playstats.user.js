@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.12.2
+// @version      1.12.3
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -1318,6 +1318,20 @@
         cursor:pointer;
     `;
 
+    const clearCacheBtn = document.createElement('button');
+    clearCacheBtn.innerText = '♻ Clear Cache';
+    clearCacheBtn.title = 'Clear giveaway cache for current page';
+    clearCacheBtn.style = `
+        padding:4px 6px;
+        font-size:12px;
+        margin-left:6px;
+        background:#1f364a;
+        color:#c7d5e0;
+        border:1px solid #3b5871;
+        border-radius:4px;
+        cursor:pointer;
+    `;
+
     const topControls = document.createElement('div');
     topControls.style = `
         display:flex;
@@ -1372,8 +1386,14 @@
         settingsPanel.appendChild(showExtendedStatsToggleRow);
     }
 
+    const rightControls = document.createElement('div');
+    rightControls.style = 'display:flex; align-items:center;';
+
+    rightControls.appendChild(clearCacheBtn);
+    rightControls.appendChild(sgSettingsBtn);
+
     topControls.appendChild(restoreBtn);
-    topControls.appendChild(sgSettingsBtn);
+    topControls.appendChild(rightControls);
 
     function makeSettingsButton(label, title, onClick) {
         const btn = document.createElement('button');
@@ -1737,6 +1757,15 @@
     sgSettingsBtn.onclick = () => {
         const open = settingsPanel.style.display === 'block';
         settingsPanel.style.display = open ? 'none' : 'block';
+    };
+
+
+    clearCacheBtn.onclick = async () => {
+        if (!confirm('Clear giveaway cache for this page?')) return;
+        await clearGiveawayCacheForCurrentUrl();
+        if (typeof status === 'function') {
+            status('Cleared cache for current group.');
+        }
     };
 
     panel.querySelector('#sgBody').prepend(topControls);
