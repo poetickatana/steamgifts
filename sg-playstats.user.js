@@ -1,13 +1,20 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.12.3
+// @version      1.13.1
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
-// @match        https://www.steamgifts.com/group/*/*
 // @match        https://www.steamgifts.com/user/*
-// @exclude      https://www.steamgifts.com/group/*/*/*
+// @match        https://www.steamgifts.com/group/*/*
+// @match        https://www.steamgifts.com/giveaway/*/*/entries
+// @match        https://www.steamgifts.com/account/manage/whitelist
+// @match        https://www.steamgifts.com/account/manage/blacklist
+// @match        https://www.steamgifts.com/user/*/giveaways/won
+// @match        https://www.steamgifts.com/group/*/*/users
+// @match        https://www.steamgifts.com/giveaway/*/*/entries
+// @match        https://www.steamgifts.com/account/manage/whitelist
+// @match        https://www.steamgifts.com/account/manage/blacklist
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -24,6 +31,21 @@
 
 (() => {
     'use strict';
+
+    // Define the exact allowed URL patterns or regex rules
+    const allowedPathRegexes = [
+        /^\/user\/[^/]+$/,                                 // Matches /user/username (no subpaths)
+        /^\/user\/[^/]+\/giveaways\/won$/,                 // Matches /user/username/giveaways/won
+        /^\/group\/[^/]+\/[^/]+\/?$/,                      // Matches /group/id/name (no subpaths)
+        /^\/group\/[^/]+\/[^/]+\/users\/?$/,               // Group users [BATCH MODE]
+        /^\/giveaway\/[^/]+\/[^/]+\/entries\/?$/,          // Giveaway entries [BATCH MODE]
+        /^\/account\/manage\/(?:whitelist|blacklist)\/?$/  // Whitelist / blacklist management [BATCH MODE]
+    ];
+
+    // If the current path doesn't match any allowed view, exit immediately
+    if (!allowedPathRegexes.some(regex => regex.test(location.pathname))) {
+        return;
+    }
 
     /************ CONFIG ************/
     const SCAN_DELAY = 500; // ms between page fetches
@@ -48,6 +70,12 @@
         giveawayCacheSize: 50000
     }
 
+    let dateFormatMDY = JSON.parse(localStorage.getItem('playstats_dateFormat') ?? 'true'); // default to MM-DD-YYYY
+    let highlightWLON = JSON.parse(localStorage.getItem('playstats_highlightWLON') ?? 'false'); //default to OFF
+    let playrateStartedON = JSON.parse(localStorage.getItem('playstats_playrateStarted') ?? 'false'); //default to OFF
+    let ignoreDlcON = JSON.parse(localStorage.getItem('playstats_ignoreDlc') ?? 'true'); //default to ON
+    let showExtendedStatsON = JSON.parse(localStorage.getItem('playstats_showExtendedStats') ?? 'false'); //default to OFF
+
     const PROFILE_STATS_MODE_KEY = 'playstats_profile_stats_mode';
 
     let profileStatsMode =
@@ -57,6 +85,35 @@
         ...DEFAULT_SETTINGS,
         ...JSON.parse(localStorage.getItem('playstats_settings') || '{}')
     };
+
+    let lastSteamTTLCleanup = 0;
+
+    const STEAM_DB_NAME = 'playstats-steam-cache';
+    const STEAM_DB_VERSION = 3;
+    let steamDbPromise = null;
+
+    const GA_DB_NAME = 'playstats-ga-cache';
+    const GA_DB_VERSION = 1;
+    let gaDbPromise = null;
+
+    let batchScanActive = false;
+
+    const status = msg => {
+        if (batchScanActive) {
+            console.log(`[Playstats batch] ${msg}`);
+            return;
+        }
+
+        const el = document.getElementById('sgStatus');
+
+        if (el) {
+            el.innerText = msg;
+        } else {
+            console.log('[Playstats]', msg);
+        }
+    };
+
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
 
     /************ GLOBAL UI STATE ************/
     let scanState = {
@@ -70,16 +127,1638 @@
     cachedTs: null
     };
 
+        /************ MAIN ************/
+    const runScan = async (useSteamCache, options = {}) => {
+        const targetUsername = options.targetUsername?.trim() || null;
+        const isBatchUserScan = !!targetUsername;
+
+        try {
+            const mode = isBatchUserScan ? 'single' : scanState.mode;
+
+            const whitelistOnly = isBatchUserScan
+                ? false
+                : !!document.getElementById('sgWhitelistOnly')?.checked;
+
+            const fullCVOnly = isBatchUserScan
+                ? false
+                : !!document.getElementById('sgFullCvOnly')?.checked;
+
+            const reviewFilterEnabled = isBatchUserScan
+                ? false
+                : !!document.getElementById('sgReviewFilterEnabled')?.checked;
+
+            const minReviews = isBatchUserScan
+                ? 0
+                : Number(document.getElementById('sgMinReviewCount')?.value || 0);
+
+            const minReviewScore = isBatchUserScan
+                ? 0
+                : Number(document.getElementById('sgMinReviewScore')?.value || 0);
+
+            const username = targetUsername ||
+                (document.getElementById('sgUser')?.value || '').trim();
+
+            if (username) {
+                scanState.userDisplay[username.toLowerCase()] ??= username;
+            }
+
+            const creatorFilter = isBatchUserScan
+                ? ''
+                : (document.getElementById('sgCreatorFilter')?.value || '')
+                    .trim().toLowerCase();
+
+            const startDateInput = isBatchUserScan
+                ? ''
+                : (document.getElementById('sgStartDate')?.value || '');
+
+            const endDateInput = isBatchUserScan
+                ? ''
+                : (document.getElementById('sgEndDate')?.value || '');
+
+            const fullScan = isBatchUserScan
+                ? true
+                : isFullScan(username, whitelistOnly, fullCVOnly, reviewFilterEnabled, creatorFilter, startDateInput, endDateInput);
+
+            // Convert to UNIX seconds (or null)
+            const startTs = startDateInput
+                ? Math.floor(new Date(startDateInput + 'T00:00:00Z').getTime() / 1000)
+                : null;
+
+            const endTs = endDateInput
+                ? Math.floor(new Date(endDateInput + 'T23:59:59Z').getTime() / 1000)
+                : null;
+
+            if (!settings.steamApiKey) {
+                status('❌ Error: Steam API Key is missing in settings.');
+                return false;
+            }
+
+            if (!options.skipApiKeyValidation) {
+                const isValid = await isApiKeyValid(settings.steamApiKey);
+
+                if (!isValid) {
+                    status('❌ Error: Invalid Steam API Key. Please check your settings.');
+                    return false;
+                }
+            }
+
+            if (mode === 'single' && !username) {
+                status('Enter a username');
+                return false;
+            }
+
+            if (!isBatchUserScan) {
+                resultsWrap.innerHTML = '';
+            }
+
+            if (useSteamCache) {
+                status(`Scanning giveaways...`);
+            } else {
+                status(`Scanning giveaways (fresh)...`);
+            }
+
+            /* -------------------------------------------------
+               Unified scan for all modes
+            ------------------------------------------------- */
+            const wins = await scanGiveaways(
+                isBatchUserScan
+                    ? {
+                        path: `/user/${encodeURIComponent(username)}/giveaways/won`,
+                        forcedWinner: username
+                    }
+                    : {}
+            );
+
+            /* -------------------------------------------------
+               Whitelist-only giveaway filtering
+            ------------------------------------------------- */
+            let filteredWins = wins;
+
+            if (whitelistOnly) {
+                filteredWins = filteredWins.filter(g => g.wlonly);
+            }
+
+            /* -------------------------------------------------
+               Creator giveaway filtering
+            ------------------------------------------------- */
+            if (creatorFilter) {
+                filteredWins = filteredWins.filter(g => g.creator === creatorFilter);
+            }
+
+            /* -------------------------------------------------
+               Ignore DLC filtering
+            ------------------------------------------------- */
+            if (ignoreDlcON) {
+                status('Filtering DLC giveaways…');
+                await ensureEsgstDlcData(filteredWins);
+                filteredWins = filterOutDlcWins(filteredWins);
+            }
+
+            /* -------------------------------------------------
+               Full CV filtering
+            ------------------------------------------------- */
+            if (fullCVOnly) {
+                status('Filtering Full CV giveaways…');
+                console.log (`filtering full CV`);
+                await ensureEsgstCvData(filteredWins);
+                filteredWins = getFullCVWins(filteredWins);
+            }
+
+            /* -------------------------------------------------
+               Date range filtering
+            ------------------------------------------------- */
+            if (startTs || endTs) {
+                filteredWins = filteredWins.filter(g => {
+                    if (startTs && g.ts < startTs) return false;
+                    if (endTs && g.ts > endTs) return false;
+                    return true;
+                });
+            }
+
+            /* -------------------------------------------------
+               Review filtering
+            ------------------------------------------------- */
+            if (
+                reviewFilterEnabled &&
+                (minReviews > 0 || minReviewScore > 0)
+            ) {
+                status('Filtering by review requirements...');
+
+                await ensureSteamMetaData(
+                    filteredWins,
+                    msg => status(msg)
+                );
+
+                filteredWins = getMinReviewWins(
+                    filteredWins,
+                    minReviews,
+                    minReviewScore
+                );
+            }
+
+            /* -------------------------------------------------
+               User-mode winner filtering
+            ------------------------------------------------- */
+            let membersSet = null;
+
+            if (mode === 'group') {
+                status('Fetching group members...');
+                membersSet = await fetchGroupMembers();
+            }
+
+            if (!filteredWins.length) {
+                if (isBatchUserScan) {
+                    options.onComplete?.(username, null, {
+                        error: 'No wins found'
+                    });
+                } else {
+                    status('No matching giveaways found');
+                }
+
+                return false;
+            }
+
+            let userMap = buildUserMap(filteredWins, mode, username, membersSet);
+
+            const usernames = Object.keys(userMap);
+            const totalUsers = usernames.length;
+
+            if (totalUsers === 0) {
+                if (isBatchUserScan) {
+                    options.onComplete?.(username, null, {
+                        error: 'No matching winners found'
+                    });
+                } else {
+                    status('No matching winners found');
+                }
+
+                return false;
+            }
+
+            /* -------------------------------------------------
+               Fetch Steam data
+            ------------------------------------------------- */
+            status('Fetching Steam data...');
+
+            let processedUsers = 0;
+            await cleanupSteamCacheTTL();
+
+            for (const [user, userWins] of Object.entries(userMap)) {
+                status(`Fetching Steam data for ${scanState.userDisplay[user] ?? user} (${++processedUsers}/${totalUsers})...`);
+
+                let steamid;
+                try {
+                    steamid = await getSteamID(user);
+                } catch (error) {
+                    if (isBatchUserScan) {
+                        options.onComplete?.(user, null, {
+                            error: `Steam ID lookup failed: ${error.message || 'Unknown error'}`
+                        });
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                userWins.forEach(w => w.steamid = steamid);
+
+                let steamGamesMap = {};
+                let isPrivateUser = false;
+
+                // 1. First attempt (using cache if enabled)
+                let res = await getOwnedGamesCachedIDB(steamid, useSteamCache);
+                steamGamesMap = res.apps;
+                isPrivateUser = !!res.private;
+
+                scanState.userPrivate[user] = isPrivateUser;
+
+                if (isPrivateUser) {
+                    userWins.forEach(w => {
+                        w.hours = null;
+                        w.ach = null;
+                    });
+
+                    if (isBatchUserScan) {
+                        options.onComplete?.(user, null, {
+                            private: true,
+                            wins: userWins.length
+                        });
+                    }
+
+                    continue; // skip Steam processing for this user
+                }
+
+                // 2. Precise Cache Invalidation Check:
+                // A win is in the "activation pending" window (ended in last 14 days)
+                const isPendingActivationWindow = (w, cacheTs) => {
+                    const fourteenDaysInSec = 14 * 24 * 60 * 60;
+                    const nowTs = Date.now() / 1000;
+                    return (nowTs - w.ts) <= fourteenDaysInSec;
+                };
+
+                // Check if cache is older than 24 hours
+                const cacheAgeInHours = (Date.now() / 1000 - res.cacheTs) / 3600;
+
+                const hasUnresolvedRecentWin = userWins.some(w =>
+                    !w.isSub &&
+                    w.app &&
+                    steamGamesMap[w.app] === undefined && // Still missing in cached data
+                    isPendingActivationWindow(w)          // Won within the last 14 days
+                );
+
+                // Only force-refresh if there's an unresolved recent win AND the cache is > 24 hours old
+                if (hasUnresolvedRecentWin && cacheAgeInHours > 24 && useSteamCache) {
+                    console.log(`[Steam Sync] ${user} has unresolved recent wins and cache is ${cacheAgeInHours.toFixed(1)}h old. Fetching fresh GetOwnedGames...`);
+                    res = await getOwnedGamesCachedIDB(steamid, false);
+                    steamGamesMap = res.apps;
+                }
+
+                initSteamProgress(userWins.length, options.progressContext);
+                let done = 0;
+
+                // Worker that processes ONE win
+                async function processWin(w) {
+                    if (w.isSub && w.sub) {
+                        try {
+                            w.hours = await getSubPlaytime(steamid, w.sub, useSteamCache);
+
+                            const subAchData = await getSubAchievements(steamid, w.sub, useSteamCache);
+                            w.ach = subAchData.ach;
+                            w.isMissing = subAchData.isMissing;
+                        } catch {
+                            w.hours = 0;
+                            w.isMissing = true;
+                            w.ach = 'N/A';
+                        }
+                    } else {
+                        w.hours = steamGamesMap[w.app] ?? 0;
+
+                        try {
+                            // If the game isn't marked private by the user, this succeeds—even for banned/delisted games
+                            w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache);
+                            w.isMissing = false;
+                        } catch (err) {
+                            // Game is manually hidden/private -> Fall back to ESGST for max achievements schema
+                            w.isMissing = true;
+
+                            const esgstData = await fetchEsgstAchievements([w.app]);
+                            const totalAch = esgstData[w.app] || 0;
+
+                            w.ach = totalAch > 0 ? `0/${totalAch}` : 'N/A';
+                        }
+                    }
+
+                    updateSteamProgress(++done, userWins.length, options.progressContext);
+                }
+
+                // Run with limited concurrency (SAFE + FAST)
+                const concurrency = settings.steamConcurrency;
+                //const steamConcurrency =
+                //    mode === 'single' ? settings.steamConcurrencyFast : settings.steamConcurrencySlow;
+
+                await runWithConcurrency(userWins, concurrency, processWin);
+
+                finishSteamProgress(options.progressContext);
+
+                // CACHE ENRICHED USER SNAPSHOT
+                if (fullScan) {
+                    await saveUserScanCache(user, userWins);
+                }
+
+                // Between users delay
+                //if (mode !== 'single') await sleep(20);
+            }
+
+            /* -------------------------------------------------
+               Render results
+            ------------------------------------------------- */
+            if (isBatchUserScan) {
+                const key = username.toLowerCase();
+                const userWins = userMap[key];
+
+                if (!userWins) {
+                    options.onComplete?.(username, null, {
+                        error: 'No wins found'
+                    });
+                    return false;
+                }
+
+                const stats = computeUserStats(userWins);
+
+                if (!scanState.userPrivate[key]) {
+                    await cacheUserStats(username, stats, true);
+                }
+
+                options.onComplete?.(username, stats, {
+                    private: !!scanState.userPrivate[key],
+                    wins: userWins.length
+                });
+
+                return true;
+            }
+
+            scanState.userMap = userMap;
+            scanState.membersSet = membersSet;
+            scanState.activeUser = null;
+
+            if (mode === 'single') {
+                scanState.summary = null;
+                scanState.activeUser = username.toLowerCase();
+                scanState.userMap = userMap;
+                scanState.membersSet = null;
+
+                saveScanState();
+                showUserDetail(scanState.activeUser, fullScan);
+                return;
+            }
+
+            // Multi-user summary
+            const summary = Object.entries(userMap).map(([user, wins]) => {
+                const stats = computeUserStats(wins);
+
+                return {
+                    username: user,
+                    ...stats
+                };
+            });
+
+            summary.sort((a, b) => a.username.localeCompare(b.username));
+
+            scanState.summary = summary;
+            renderSummary(summary, membersSet);
+            status(`Loaded ${summary.length} users`);
+        } catch (err) {
+            console.error('[Playstats]', err);
+            status('Scan failed — see console');
+            options.onComplete?.(options.targetUsername, null, {
+                error: err.message || 'Scan failed'
+            });
+            return false;
+        }
+    };
+
+    /************ MULTI-USER PAGE DETECTION ************/
+    const isMultiUserPage =
+        /^\/account\/manage\/(?:whitelist|blacklist)\/?$/.test(location.pathname) ||
+        /^\/group\/[^/]+\/[^/]+\/users\/?$/.test(location.pathname) ||
+        /^\/giveaway\/[^/]+\/[^/]+\/entries\/?$/.test(location.pathname);
+
+    if (isMultiUserPage) {
+        initMultiUserMode();
+        return;
+    }
+
+    /************ MULTI-USER SELECTION UI ************/
+    function initMultiUserMode() {
+        const PANEL_ID = 'playstats-multi-panel';
+        const POSITION_TOP_KEY = 'playstats_multiPanelTop';
+        const POSITION_LEFT_KEY = 'playstats_multiPanelLeft';
+        const MULTI_DELAY_KEY = 'playstats_multiUserDelaySeconds';
+        const DEFAULT_MULTI_DELAY_SECONDS = 2;
+
+        // Avoid creating a duplicate panel.
+        if (document.getElementById(PANEL_ID)) return;
+
+        const users = new Map();
+        const rowElements = new Map();
+        const lastCheckedTimestamps = new Map();
+
+        let selectAllByDefault = false;
+        let isCollapsed = true;
+        let isDragging = false;
+        let dragMoved = false;
+        let startX = 0;
+        let startY = 0;
+        let startLeft = 0;
+        let startTop = 0;
+        let discoveryTimer = null;
+
+        const style = document.createElement('style');
+        style.textContent = `
+            #${PANEL_ID} {
+                position: fixed;
+                top: 40px;
+                right: 30px;
+                width: fit-content;
+                max-width: calc(100vw - 24px);
+                max-height: calc(100vh - 30px);
+                overflow: auto;
+                z-index: 99999;
+                background: #1b2838;
+                color: #c7d5e0;
+                border: 1px solid #34465a;
+                border-radius: 6px;
+                box-shadow: 0 6px 18px #0009;
+                font: 13px/1.4 Arial, sans-serif;
+            }
+
+            #${PANEL_ID} * {
+                box-sizing: border-box;
+            }
+
+            #${PANEL_ID} #playstats-multi-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                padding: 8px 10px;
+                background: #2a475e;
+                font-weight: bold;
+                cursor: pointer;
+                user-select: none;
+            }
+
+            #${PANEL_ID} button {
+                margin: 0;
+                padding: 4px 8px;
+                border: 0;
+                border-radius: 3px;
+                background: #2a475e;
+                color: #fff;
+                font: inherit;
+                cursor: pointer;
+            }
+
+            #${PANEL_ID} button:hover {
+                background: #385d7a;
+            }
+
+            #${PANEL_ID} .pm-table-wrap {
+                overflow: auto;
+                max-height: 55vh;
+            }
+
+            #${PANEL_ID} table {
+                width: 100%;
+                border-collapse: collapse;
+                color: #c7d5e0;
+                text-align: left;
+            }
+
+            #${PANEL_ID} th,
+            #${PANEL_ID} td {
+                padding: 5px 10px;
+                border-bottom: 1px solid #34465a;
+                line-height: 1.4;
+                vertical-align: middle;
+                white-space: nowrap;
+            }
+
+            #${PANEL_ID} th {
+                position: sticky;
+                top: 0;
+                background: #22384b;
+            }
+
+            #${PANEL_ID} td.pm-user {
+                width: 100%;
+                white-space: normal;
+                overflow-wrap: anywhere;
+            }
+
+            #${PANEL_ID} a {
+                color: #66c0f4;
+                text-decoration: none;
+            }
+
+            #${PANEL_ID} a:hover {
+                text-decoration: underline;
+            }
+
+            #${PANEL_ID} .pm-select-cell {
+                width: 28px;
+                text-align: center;
+            }
+
+            #${PANEL_ID} input.pm-checkbox {
+                display: inline-block !important;
+                width: 14px !important;
+                height: 14px !important;
+                min-width: 14px !important;
+                margin: 0 !important;
+                padding: 0 !important;
+                vertical-align: middle;
+                line-height: 1 !important;
+                cursor: pointer;
+            }
+
+            #${PANEL_ID} .pm-stat {
+                text-align: right;
+                font-variant-numeric: tabular-nums;
+            }
+
+
+
+            #${PANEL_ID}:not(.pm-collapsed) {
+                width: 720px !important;
+            }
+
+            #${PANEL_ID}.pm-collapsed {
+                width: auto;
+                overflow: hidden;
+            }
+
+            #${PANEL_ID}.pm-collapsed #playstats-multi-content {
+                display: none;
+            }
+
+            #${PANEL_ID} .pm-last-checked {
+                text-align: center;
+                font-size: 12px;
+            }
+
+            #${PANEL_ID} .pm-scan-status {
+                min-width: 115px;
+                font-size: 12px;
+            }
+
+            #${PANEL_ID} .pm-progress-track {
+                width: 100%;
+                min-width: 85px;
+                height: 7px;
+                background: #0e1621;
+                border-radius: 4px;
+                overflow: hidden;
+            }
+
+            #${PANEL_ID} .pm-progress-bar {
+                width: 0%;
+                height: 100%;
+                background: #66c0f4;
+                border-radius: 4px;
+                transition: width 120ms ease;
+            }
+
+            #${PANEL_ID} .pm-scan-error {
+                color: #ff7777;
+                white-space: normal;
+            }
+
+            #${PANEL_ID} .pm-scan-done {
+                color: #a4d7a4;
+            }
+
+            #${PANEL_ID} .pm-scan-spinner {
+                display: inline-block;
+                width: 13px;
+                height: 13px;
+                border: 2px solid #52697c;
+                border-top-color: #66c0f4;
+                border-radius: 50%;
+                animation: pm-spin 0.7s linear infinite;
+                vertical-align: middle;
+                margin-right: 5px;
+            }
+
+            @keyframes pm-spin {
+                to { transform: rotate(360deg); }
+            }
+
+            #${PANEL_ID} .pm-scan-starting {
+                display: flex;
+                align-items: center;
+                gap: 3px;
+            }
+
+            #${PANEL_ID} #sgMultiStatus {
+                flex: 0 0 100%;
+                width: 100%;
+                margin: 6px 0 0;
+            }
+
+            #${PANEL_ID} button.pm-run-active {
+                background: #8b3a3a !important;
+                color: #fff;
+            }
+
+            #${PANEL_ID} button.pm-run-active:hover {
+                background: #ad4949 !important;
+            }
+
+            #${PANEL_ID} button:disabled {
+                opacity: 0.65;
+                cursor: wait;
+            }
+
+            /* Toolbar layout formatting */
+            #${PANEL_ID} .pm-toolbar {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                padding: 10px;
+                background: #17212d;
+                border-bottom: 1px solid #34465a;
+            }
+
+            #${PANEL_ID} .pm-button-group,
+            #${PANEL_ID} .pm-filter-group,
+            #${PANEL_ID} .pm-action-group {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                flex-wrap: wrap;
+            }
+
+            #${PANEL_ID} .pm-filter-group {
+                font-size: 12px;
+                color: #8f98a0;
+            }
+
+            /* Input refinements */
+            #${PANEL_ID} input[type="number"] {
+                background: #0e1621;
+                color: #66c0f4;
+                border: 1px solid #3b5871;
+                border-radius: 3px;
+                padding: 3px 6px;
+                text-align: center;
+                font-size: 12px;
+            }
+
+            /* Primary action button highlight */
+            #${PANEL_ID} button.pm-primary-run {
+                background: #2a75b3;
+                font-weight: bold;
+            }
+
+            #${PANEL_ID} button.pm-primary-run:hover {
+                background: #388bc5;
+            }
+
+            /* Secondary button styling */
+            #${PANEL_ID} button.pm-secondary-btn {
+                background: #22384b;
+                border: 1px solid #3b5871;
+            }
+
+            #${PANEL_ID} button.pm-secondary-btn:hover {
+                background: #2a475e;
+            }
+
+            /* Table Row Hover Highlight */
+            #${PANEL_ID} tbody tr:hover {
+                background: rgba(102, 192, 244, 0.06);
+            }
+
+            #${PANEL_ID} .pm-status {
+                padding: 8px 10px;
+                color: #8f98a0;
+                font-size: 12px;
+                background: #141f2c;
+                border-top: 1px solid #34465a;
+            }
+        `;
+        document.head.appendChild(style);
+
+        const panel = document.createElement('div');
+        panel.id = PANEL_ID;
+        panel.style.width = 'fit-content';
+
+        const savedDelay = Number(localStorage.getItem(MULTI_DELAY_KEY));
+
+        const initialDelaySeconds =
+            localStorage.getItem(MULTI_DELAY_KEY) !== null &&
+            Number.isFinite(savedDelay) &&
+            savedDelay >= 0
+                ? Math.min(60, savedDelay)
+                : DEFAULT_MULTI_DELAY_SECONDS;
+
+        panel.innerHTML = `
+        <div id="playstats-multi-header" title="Click to collapse or expand; drag to move">
+            <span id="playstats-multi-header-label">▼ Playstats (Multi-user)</span>
+        </div>
+        <div id="playstats-multi-content">
+            <!-- Toolbar Section with Grouped Controls -->
+            <div class="pm-toolbar">
+                <div class="pm-button-group">
+                    <button id="playstats-multi-select-all" type="button">Select All</button>
+                    <button id="playstats-multi-select-none" type="button">Deselect All</button>
+                </div>
+
+                <div class="pm-filter-group">
+                    <button id="playstats-multi-select-stale" type="button" class="pm-secondary-btn">Select Outdated</button>
+                    <label for="playstats-multi-stale-days">Older than</label>
+                    <input
+                        id="playstats-multi-stale-days"
+                        type="number"
+                        min="1"
+                        max="3650"
+                        step="1"
+                        value="30"
+                        style="width:55px;"
+                        title="Select users never checked or last checked more than this many days ago"
+                    >
+                    <span>days</span>
+                </div>
+
+                <div id="sgMultiScanControls" class="pm-action-group">
+                    <button id="sgMultiRun" type="button" class="pm-primary-run">▶ Run Selected</button>
+
+                    <label for="sgMultiDelay" style="white-space:nowrap;">
+                        Scan Delay:
+                    </label>
+                    <input
+                        id="sgMultiDelay"
+                        type="number"
+                        min="0"
+                        max="60"
+                        step="1"
+                        value="${initialDelaySeconds}"
+                        style="width:50px;"
+                        title="Delay in seconds between user scans"
+                    >
+                    <span>s</span>
+                </div>
+
+                <div id="sgMultiStatus" role="status" style="margin:4px 0; width:100%;"></div>
+            </div>
+
+            <!-- Table Section -->
+            <div class="pm-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th data-sort="text">User</th>
+                            <th data-sort="number">Wins</th>
+                            <th data-sort="number">&gt;0%</th>
+                            <th data-sort="number">&gt;25%</th>
+                            <th data-sort="number">100%</th>
+                            <th data-sort="number">Avg %</th>
+                            <th data-sort="date">Last Checked</th>
+                            <th data-sort="text">Scan Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="playstats-multi-body"></tbody>
+                </table>
+            </div>
+
+            <div class="pm-status" id="playstats-multi-status">
+                💡 Scroll down the SteamGifts page to load and discover more users automatically.
+            </div>
+        </div>
+        `;
+
+        document.body.appendChild(panel);
+
+        if (isCollapsed) {
+            panel.classList.add('pm-collapsed');
+        }
+
+        const header = panel.querySelector('#playstats-multi-header');
+        const tbody = panel.querySelector('#playstats-multi-body');
+        const statusLabel = panel.querySelector('#playstats-multi-status');
+
+        const delayInput = panel.querySelector('#sgMultiDelay');
+
+        delayInput.addEventListener('change', () => {
+            const seconds = Math.max(
+                0,
+                Math.min(60, Number(delayInput.value) || 0)
+            );
+
+            delayInput.value = String(seconds);
+            localStorage.setItem(MULTI_DELAY_KEY, String(seconds));
+        });
+
+        function restorePosition() {
+            const savedTop = localStorage.getItem(POSITION_TOP_KEY);
+            const savedLeft = localStorage.getItem(POSITION_LEFT_KEY);
+
+            if (savedTop !== null && savedTop !== '') {
+                panel.style.top = `${savedTop}px`;
+            }
+
+            if (savedLeft !== null && savedLeft !== '') {
+                panel.style.left = `${savedLeft}px`;
+            }
+        }
+
+        function savePosition() {
+            localStorage.setItem(
+                POSITION_TOP_KEY,
+                String(panel.offsetTop)
+            );
+
+            localStorage.setItem(
+                POSITION_LEFT_KEY,
+                String(panel.offsetLeft)
+            );
+        }
+
+        // Restore the existing Playstats panel position.
+        restorePosition();
+
+        // Drag from the header, except when clicking its button.
+        header.addEventListener('pointerdown', event => {
+            if (event.target.closest('button') || event.button !== 0) return;
+
+            isDragging = true;
+            dragMoved = false;
+
+            const rect = panel.getBoundingClientRect();
+            startX = event.clientX;
+            startY = event.clientY;
+            startLeft = rect.left;
+            startTop = rect.top;
+
+            panel.style.left = `${rect.left}px`;
+            panel.style.top = `${rect.top}px`;
+            panel.style.right = 'auto';
+
+            header.setPointerCapture(event.pointerId);
+            event.preventDefault();
+        });
+
+        header.addEventListener('pointermove', event => {
+            if (!isDragging) return;
+
+            if (
+                Math.abs(event.clientX - startX) > 4 ||
+                Math.abs(event.clientY - startY) > 4
+            ) {
+                dragMoved = true;
+            }
+
+            const left = Math.max(
+                0,
+                Math.min(
+                    window.innerWidth - panel.offsetWidth,
+                    startLeft + event.clientX - startX
+                )
+            );
+
+            const top = Math.max(
+                0,
+                Math.min(
+                    window.innerHeight - 30,
+                    startTop + event.clientY - startY
+                )
+            );
+
+            panel.style.left = `${left}px`;
+            panel.style.top = `${top}px`;
+        });
+
+        header.addEventListener('click', () => {
+            if (dragMoved) {
+                dragMoved = false;
+                return;
+            }
+
+            isCollapsed = !isCollapsed;
+            panel.classList.toggle('pm-collapsed', isCollapsed);
+
+            const label = panel.querySelector('#playstats-multi-header-label');
+            label.textContent = `${isCollapsed ? '▶' : '▼'} Playstats (Multi-user)`;
+        });
+
+        function finishDrag() {
+            if (!isDragging) return;
+            isDragging = false;
+            savePosition();
+        }
+
+        header.addEventListener('pointerup', finishDrag);
+        header.addEventListener('pointercancel', finishDrag);
+
+        function updateCount() {
+            const selected = [...users.values()]
+                .filter(user => user.selected).length;
+
+            statusLabel.textContent =
+                `${selected} selected / ${users.size} users`;
+        }
+
+        function formatPercent(value) {
+            if (value === null || value === undefined ||
+                !Number.isFinite(Number(value))) {
+                return '—';
+            }
+
+            return `${Number(value)}%`;
+        }
+
+        function formatCheckedDate(timestamp) {
+            if (!timestamp) return '—';
+
+            // Support either Unix seconds or JavaScript milliseconds.
+            const milliseconds = timestamp < 1e12
+                ? timestamp * 1000
+                : timestamp;
+
+            const date = new Date(milliseconds);
+
+            return Number.isNaN(date.getTime())
+                ? '—'
+                : date.toLocaleDateString();
+        }
+
+        async function loadStats(username, cells) {
+            try {
+                // Uses the existing Playstats cache function.
+                const cached = await getUserStatsFromCache(username);
+
+                // Ignore stale async results if this row was replaced.
+                if (!cells.row.isConnected ||
+                    cells.row.dataset.username !== username.toLowerCase()) {
+                    return;
+                }
+
+               if (cached?.ts) {
+                   lastCheckedTimestamps.set(
+                       username.toLowerCase(),
+                       cached.ts < 1e12 ? cached.ts * 1000 : cached.ts
+                   );
+
+                   cells.lastChecked.textContent = formatCheckedDate(cached.ts);
+
+                   cells.lastChecked.dataset.timestamp = cached.ts
+                       ? String(cached.ts < 1e12 ? cached.ts * 1000 : cached.ts)
+                       : '';
+               }
+
+               if (!cached?.stats) return;
+
+               cells.lastChecked.textContent = formatCheckedDate(cached.ts);
+
+               const stats = cached.stats;
+
+               cells.wins.textContent =
+                   stats.gamesWon != null ? stats.gamesWon : '—';
+
+               cells.any.textContent = formatPercent(stats.pctAnyCompletion);
+               cells.over25.textContent = formatPercent(stats.pct25Completion);
+               cells.full.textContent = formatPercent(stats.pct100Completion);
+               cells.average.textContent = formatPercent(stats.compPct);
+
+               cells.row.title = cached.ts
+                   ? `Last checked: ${formatCheckedDate(cached.ts)}`
+                   : '';
+            } catch (error) {
+                console.warn(
+                    '[Playstats] Could not load cached stats for',
+                    username,
+                    error
+                );
+            }
+        }
+
+        function updateMultiUserStatsRow(username, stats, result = {}) {
+            const key = username.toLowerCase();
+            const row = rowElements.get(key);
+            if (!row?.isConnected) return;
+
+            const statusCell = row.querySelector('.pm-scan-status');
+            const dateCell = row.querySelector('.pm-last-checked');
+
+            if (!row?.isConnected) return;
+
+            const cells = row.querySelectorAll('td.pm-stat');
+            if (cells.length !== 5) return;
+
+            // A private profile has no usable completion statistics.
+            if (!stats || result.private) {
+                cells.forEach(cell => {
+                    cell.textContent = '—';
+                });
+
+                if (result.private) {
+                    statusCell.className = 'pm-scan-status';
+                    statusCell.textContent = '🔒 Private profile';
+                } else {
+                    statusCell.className = 'pm-scan-status pm-scan-error';
+                    statusCell.textContent = result.error || 'Scan failed';
+                }
+
+                row.title = result.private
+                    ? 'Steam profile is private'
+                    : (result.error || 'Statistics unavailable');
+
+                return;
+            }
+
+            const values = [
+                stats.pctAnyCompletion,
+                stats.pct25Completion,
+                stats.pct100Completion,
+                stats.compPct
+            ];
+
+            if (result.wins != null) {
+                cells[0].textContent = result.wins;
+            }
+
+            values.forEach((value, index) => {
+                cells[index + 1].textContent = formatPercent(value);
+            });
+
+            if (statusCell) {
+                statusCell.className = 'pm-scan-status pm-scan-done';
+                statusCell.textContent = '✓ Done';
+            }
+
+            if (dateCell) {
+                const checkedAt = Date.now();
+
+                dateCell.textContent = formatCheckedDate(checkedAt);
+                dateCell.dataset.timestamp = String(checkedAt);
+            }
+            
+            row.title =
+                `Scan complete: ${result.wins ?? '—'} wins · ` +
+                new Date().toLocaleString();
+        }
+
+        function createUserProgressContext(username) {
+            const row = rowElements.get(username.toLowerCase());
+            if (!row) return null;
+
+            const statusCell = row.querySelector('.pm-scan-status');
+            const dateCell = row.querySelector('.pm-last-checked');
+
+            if (!statusCell || !dateCell) return null;
+
+            return {
+                start() {
+                    statusCell.className = 'pm-scan-status';
+                    statusCell.innerHTML = `
+                        <span class="pm-scan-starting">
+                            <span class="pm-scan-spinner"></span>
+                            <span>Preparing scan…</span>
+                        </span>
+                    `;
+                },
+
+                update(done, total) {
+                    // Create the progress bar on the first update, replacing the spinner.
+                    if (!statusCell.querySelector('.pm-progress-track')) {
+                        statusCell.className = 'pm-scan-status';
+                        statusCell.innerHTML = `
+                            <div class="pm-progress-track">
+                                <div class="pm-progress-bar"></div>
+                            </div>
+                            <div class="pm-progress-label"></div>
+                        `;
+                    }
+
+                    const bar = statusCell.querySelector('.pm-progress-bar');
+                    const label = statusCell.querySelector('.pm-progress-label');
+
+                    if (!bar || !label) return;
+
+                    const percent = total > 0
+                        ? Math.round((done / total) * 100)
+                        : 0;
+
+                    bar.style.width = `${percent}%`;
+                    label.textContent = `${percent}% (${done}/${total})`;
+                },
+
+                finish() {
+                    statusCell.className = 'pm-scan-status pm-scan-done';
+                    statusCell.textContent = '✓ Done';
+                    dateCell.textContent = new Date().toLocaleDateString();
+                },
+
+                setMessage(message, isError = false) {
+                    statusCell.className = isError
+                        ? 'pm-scan-status pm-scan-error'
+                        : 'pm-scan-status';
+
+                    statusCell.textContent = message;
+                }
+            };
+        }
+
+        function addUser(username) {
+            const key = username.toLowerCase();
+            if (users.has(key)) return;
+
+            const user = {
+                username,
+                selected: selectAllByDefault
+            };
+
+            users.set(key, user);
+
+            const row = document.createElement('tr');
+            row.dataset.username = key;
+            row.dataset.originalOrder = String(tbody.rows.length);
+
+            const selectCell = document.createElement('td');
+            selectCell.className = 'pm-select-cell';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'pm-checkbox sg-multi-user-select';
+            checkbox.dataset.username = username;
+            checkbox.checked = user.selected;
+            checkbox.setAttribute('aria-label', `Select ${username}`);
+
+            checkbox.addEventListener('change', () => {
+                user.selected = checkbox.checked;
+                updateCount();
+            });
+
+            selectCell.appendChild(checkbox);
+
+            const userCell = document.createElement('td');
+            userCell.className = 'pm-user';
+
+            const link = document.createElement('a');
+            link.href = `/user/${encodeURIComponent(username)}/giveaways/won`;
+            link.textContent = username;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+
+            userCell.appendChild(link);
+
+            const wins = document.createElement('td');
+            wins.className = 'pm-stat';
+            wins.textContent = '—';
+
+            const any = document.createElement('td');
+            const over25 = document.createElement('td');
+            const full = document.createElement('td');
+            const average = document.createElement('td');
+
+            const lastChecked = document.createElement('td');
+            lastChecked.className = 'pm-last-checked';
+            lastChecked.textContent = '—';
+
+            const scanStatus = document.createElement('td');
+            scanStatus.className = 'pm-scan-status';
+            scanStatus.textContent = '—';
+
+            for (const cell of [any, over25, full, average]) {
+                cell.className = 'pm-stat';
+                cell.textContent = '—';
+            }
+
+            row.append(
+                selectCell, userCell,
+                wins, any, over25, full, average,
+                lastChecked, scanStatus
+            );
+
+            tbody.appendChild(row);
+
+            rowElements.set(key, row);
+
+            loadStats(username, {
+                row,
+                wins,
+                any,
+                over25,
+                full,
+                average,
+                lastChecked,
+                scanStatus
+            });
+
+            updateCount();
+        }
+
+        let multiUserScanRunning = false;
+        let abortMultiUserScan = false;
+
+        async function runSelectedUsers() {
+            if (multiUserScanRunning) return;
+
+            const runButton = panel.querySelector('#sgMultiRun');
+            const delayInput = panel.querySelector('#sgMultiDelay');
+            const scanStatus = panel.querySelector('#sgMultiStatus');
+
+            const selectedUsers = [...users.values()]
+                .filter(user => user.selected)
+                .map(user => user.username);
+
+            if (!selectedUsers.length) {
+                scanStatus.textContent = 'Select at least one user.';
+                return;
+            }
+
+            if (!settings.steamApiKey) {
+                scanStatus.textContent =
+                    'Steam API key is missing. Configure it in Playstats settings.';
+                return;
+            }
+
+            // Initialize the batch scan only after basic validation.
+            abortMultiUserScan = false;
+            multiUserScanRunning = true;
+            batchScanActive = true;
+
+            // Keep the button enabled so it can be clicked to abort.
+            runButton.disabled = false;
+            runButton.textContent = 'Running (Abort)';
+            runButton.classList.add('pm-run-active');
+
+            const delaySeconds = Math.max(
+                0,
+                Math.min(60, Number(delayInput.value) || 0)
+            );
+
+            let succeeded = 0;
+            let failed = 0;
+
+            try {
+                scanStatus.textContent = 'Validating Steam API key…';
+
+                const validKey = await isApiKeyValid(settings.steamApiKey);
+
+                if (!validKey) {
+                    scanStatus.textContent = 'Invalid Steam API key.';
+                    return;
+                }
+
+                // An abort may have been requested during API-key validation.
+                if (abortMultiUserScan) {
+                    scanStatus.textContent = 'Scan aborted.';
+                    return;
+                }
+
+                await cleanupSteamCacheTTL();
+
+                // Check again in case an abort was requested during cache cleanup.
+                if (abortMultiUserScan) {
+                    scanStatus.textContent = 'Scan aborted.';
+                    return;
+                }
+
+                for (let i = 0; i < selectedUsers.length; i++) {
+                    // Don't start another user's scan after an abort request.
+                    if (abortMultiUserScan) break;
+
+                    const username = selectedUsers[i];
+
+                    scanStatus.textContent =
+                        `Scanning ${i + 1}/${selectedUsers.length}: ${username}`;
+
+                    try {
+                        const progressContext =
+                            createUserProgressContext(username);
+
+                        progressContext?.start();
+
+                        const result = await runScan(true, {
+                            targetUsername: username,
+                            skipApiKeyValidation: true,
+                            progressContext,
+
+                            onComplete: (user, stats, details = {}) => {
+                                updateMultiUserStatsRow(user, stats, details);
+                            }
+                        });
+
+                        if (result === true) {
+                            succeeded++;
+                        } else {
+                            failed++;
+                        }
+                    } catch (error) {
+                        failed++;
+
+                        console.error(
+                            `[Playstats] Multi-user scan failed for ${username}:`,
+                            error
+                        );
+
+                        updateMultiUserStatsRow(username, null, {
+                            error: error.message || 'Scan failed'
+                        });
+                    }
+
+                    // The current user's scan has finished. Honor an abort request
+                    // before waiting or starting the next user.
+                    if (abortMultiUserScan) break;
+
+                    if (i < selectedUsers.length - 1 && delaySeconds > 0) {
+                        // Use short intervals so an abort during the delay is
+                        // noticed promptly instead of waiting the full delay.
+                        const delayMs = delaySeconds * 1000;
+                        const intervalMs = 100;
+
+                        for (
+                            let elapsed = 0;
+                            elapsed < delayMs && !abortMultiUserScan;
+                            elapsed += intervalMs
+                        ) {
+                            await sleep(Math.min(intervalMs, delayMs - elapsed));
+                        }
+
+                        if (abortMultiUserScan) break;
+                    }
+                }
+
+                scanStatus.textContent = abortMultiUserScan
+                    ? `Aborted: ${succeeded} succeeded, ${failed} failed.`
+                    : `Finished: ${succeeded} succeeded, ${failed} failed.`;
+
+            } finally {
+                // Always restore the controls, including after validation failures.
+                batchScanActive = false;
+                multiUserScanRunning = false;
+                runButton.disabled = false;
+                runButton.textContent = '▶ Run Selected';
+                runButton.classList.remove('pm-run-active');
+            }
+        }
+
+        const runButton = panel.querySelector('#sgMultiRun');
+
+        runButton.addEventListener('click', () => {
+            if (multiUserScanRunning) {
+                abortMultiUserScan = true;
+                runButton.textContent = 'Aborting…';
+                runButton.disabled = true;
+
+                panel.querySelector('#sgMultiStatus').textContent =
+                    'Abort requested. Finishing the current user…';
+
+                return;
+            }
+
+            runSelectedUsers();
+        });
+
+        function discoverUsers() {
+            const rows = document.querySelectorAll('.table__row-inner-wrap');
+
+            for (const row of rows) {
+                // Read actual username links only; ignore avatar links,
+                // ESGST icons, tags, and Multi-Manager checkboxes.
+                const links = row.querySelectorAll(
+                    'a.table__column__heading, a[href^="/user/"], a[data-href^="/user/"]'
+                );
+
+                for (const link of links) {
+                    const raw = link.getAttribute('href') ||
+                        link.getAttribute('data-href') || '';
+
+                    const match = raw.match(/^\/user\/([^/?#]+)\/?$/);
+                    if (!match) continue;
+
+                    addUser(decodeURIComponent(match[1]));
+                    break;
+                }
+            }
+        }
+
+        document.querySelector('#playstats-multi-select-all')
+            .addEventListener('click', () => {
+                selectAllByDefault = true;
+
+                for (const user of users.values()) {
+                    user.selected = true;
+                }
+
+                for (const row of rowElements.values()) {
+                    row.querySelector('.pm-checkbox').checked = true;
+                }
+
+                updateCount();
+
+               const scanStatus = panel.querySelector('#sgMultiStatus');
+               scanStatus.textContent =
+                    `Selected all users.`;
+            });
+
+        document.querySelector('#playstats-multi-select-none')
+            .addEventListener('click', () => {
+                selectAllByDefault = false;
+
+                for (const user of users.values()) {
+                    user.selected = false;
+                }
+
+                for (const row of rowElements.values()) {
+                    row.querySelector('.pm-checkbox').checked = false;
+                }
+
+                updateCount();
+
+                const scanStatus = panel.querySelector('#sgMultiStatus');
+                scanStatus.textContent =
+                    `Deselected all users.`;
+            });
+
+
+        panel.querySelector('#playstats-multi-select-stale')
+            .addEventListener('click', async () => {
+                const input = panel.querySelector('#playstats-multi-stale-days');
+                const scanStatus = panel.querySelector('#sgMultiStatus');
+
+                const days = Math.max(
+                    1,
+                    Math.min(3650, Number(input.value) || 30)
+                );
+
+                input.value = String(days);
+
+                // Ensure dates are loaded for users whose cache lookup hasn't finished.
+                scanStatus.textContent = 'Checking cached dates…';
+
+                await Promise.all(
+                    [...users.values()].map(async user => {
+                        const key = user.username.toLowerCase();
+
+                        if (lastCheckedTimestamps.has(key)) return;
+
+                        try {
+                            const cached = await getUserStatsFromCache(user.username);
+
+                            if (cached?.ts) {
+                                const timestamp = cached.ts < 1e12
+                                    ? cached.ts * 1000
+                                    : cached.ts;
+
+                                lastCheckedTimestamps.set(key, timestamp);
+
+                                const row = rowElements.get(key);
+                                const dateCell = row?.querySelector('.pm-last-checked');
+
+                                if (dateCell) {
+                                    dateCell.textContent = formatCheckedDate(cached.ts);
+                                }
+                            }
+                        } catch (error) {
+                            console.warn(
+                                '[Playstats] Could not check cache date for',
+                                user.username,
+                                error
+                            );
+                        }
+                    })
+                );
+
+                const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+                let selected = 0;
+
+                for (const user of users.values()) {
+                    const timestamp = lastCheckedTimestamps.get(
+                        user.username.toLowerCase()
+                    );
+
+                    user.selected = !timestamp || timestamp < cutoff;
+
+                    const row = rowElements.get(user.username.toLowerCase());
+                    const checkbox = row?.querySelector('.pm-checkbox');
+
+                    if (checkbox) checkbox.checked = user.selected;
+                    if (user.selected) selected++;
+                }
+
+                selectAllByDefault = false;
+                updateCount();
+
+                scanStatus.textContent =
+                    `Selected ${selected} users not checked within ${days} days.`;
+            });
+
+// Native sorting for the multi-user table.
+const multiTable = tbody.closest('table');
+const sortHeaders = [...multiTable.querySelectorAll('thead th')];
+
+let currentSort = {
+    column: -1,
+    direction: 0 // 0 = default, 1 = ascending, -1 = descending
+};
+
+sortHeaders.forEach((th, column) => {
+    const sortType = th.dataset.sort;
+    if (!sortType) return;
+
+    th.style.cursor = 'pointer';
+    th.title = 'Click to sort; click again to reverse order';
+
+    th.addEventListener('click', () => {
+        if (currentSort.column === column) {
+            currentSort.direction =
+                currentSort.direction === 1 ? -1 :
+                currentSort.direction === -1 ? 0 : 1;
+        } else {
+            currentSort = {
+                column,
+                direction: 1
+            };
+        }
+
+        // Clear previous indicators.
+        sortHeaders.forEach(header => {
+            header.textContent = header.textContent
+                .replace(/ [▲▼]$/, '');
+        });
+
+        if (currentSort.direction !== 0) {
+            th.textContent += currentSort.direction === 1 ? ' ▲' : ' ▼';
+        }
+
+        sortMultiUserRows(column, sortType, currentSort.direction);
+    });
+});
+
+function sortMultiUserRows(column, type, direction) {
+    const rows = [...tbody.rows];
+
+    // Restore default order when direction returns to 0.
+    if (direction === 0) {
+        rows.sort((a, b) =>
+            a.dataset.originalOrder - b.dataset.originalOrder
+        );
+    } else {
+        rows.sort((a, b) => {
+            const aCell = a.cells[column];
+            const bCell = b.cells[column];
+
+            let aValue;
+            let bValue;
+
+            if (type === 'number') {
+                aValue = parseFloat(aCell.textContent);
+                bValue = parseFloat(bCell.textContent);
+
+                if (!Number.isFinite(aValue)) aValue = -Infinity;
+                if (!Number.isFinite(bValue)) bValue = -Infinity;
+            } else if (type === 'date') {
+                aValue = Number(aCell.dataset.timestamp) || 0;
+                bValue = Number(bCell.dataset.timestamp) || 0;
+            } else {
+                aValue = aCell.textContent.trim().toLowerCase();
+                bValue = bCell.textContent.trim().toLowerCase();
+            }
+
+            if (aValue < bValue) return -1 * direction;
+            if (aValue > bValue) return 1 * direction;
+            return 0;
+        });
+    }
+
+    rows.forEach(row => tbody.appendChild(row));
+}
+
+        // Debounce ESGST/infinite-scroll mutations to avoid repeatedly
+        // scanning the entire page during a burst of DOM updates.
+        const observer = new MutationObserver(mutations => {
+            if (!mutations.some(m => !panel.contains(m.target))) return;
+
+            clearTimeout(discoveryTimer);
+            discoveryTimer = setTimeout(discoverUsers, 150);
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+
+        discoverUsers();
+    }
+
     let summarySort = {
         col: null,
         asc: true
     };
-
-    let dateFormatMDY = true; // default to MM-DD-YYYY
-    let highlightWLON = false; // default to OFF
-    let playrateStartedON = false;
-    let ignoreDlcON = true; // default to ON
-    let showExtendedStatsON = false; // default to OFF
 
     let isDragging = false;
     let dragMoved = false;
@@ -1772,26 +3451,24 @@
 
     const dateToggle = document.getElementById('sgDateFormatToggle');
 
-    // Load saved state from localStorage (default to true if not set)
-    const savedDateFormat = localStorage.getItem('playstats_dateFormat');
-    dateToggle.checked = savedDateFormat !== null ? JSON.parse(savedDateFormat) : dateFormatMDY;
+    if (dateToggle) {
+        // Set the toggle switch state to match the loaded variable
+        dateToggle.checked = dateFormatMDY;
 
-    // Set the variable to match saved state
-    dateFormatMDY = dateToggle.checked;
+        dateToggle.addEventListener('change', () => {
+            dateFormatMDY = dateToggle.checked;
 
-    dateToggle.addEventListener('change', () => {
-        dateFormatMDY = dateToggle.checked;
+            // Save to localStorage
+            localStorage.setItem('playstats_dateFormat', JSON.stringify(dateFormatMDY));
 
-        // Save to localStorage
-        localStorage.setItem('playstats_dateFormat', JSON.stringify(dateFormatMDY));
-
-        // Re-render tables if needed
-        if (scanState.activeUser) {
-            showUserDetail(scanState.activeUser);
-        } else if (scanState.summary) {
-            renderSummary(scanState.summary, scanState.membersSet);
-        }
-    });
+            // Re-render tables if needed (only applies in single-user mode)
+            if (scanState.activeUser) {
+                showUserDetail(scanState.activeUser);
+            } else if (scanState.summary) {
+                renderSummary(scanState.summary, scanState.membersSet);
+            }
+        });
+    }
 
     const profileModeSelect =
         document.getElementById('sgProfileStatsMode');
@@ -1811,70 +3488,48 @@
     });
 
     const highlightWLToggle = document.getElementById('sgHighlightWLToggle');
+    if (highlightWLToggle) {
+        highlightWLToggle.checked = highlightWLON;
 
-    // Load saved state from localStorage (default to true if not set)
-    const savedHighlightWL = localStorage.getItem('playstats_highlightwl');
-    highlightWLToggle.checked = savedHighlightWL !== null ? JSON.parse(savedHighlightWL) : highlightWLON;
-
-    // Set the variable to match saved state
-    highlightWLON = highlightWLToggle.checked;
-
-    highlightWLToggle.addEventListener('change', async () => {
-        highlightWLON = highlightWLToggle.checked;
-
-        // Save to localStorage
-        localStorage.setItem('playstats_highlightwl', JSON.stringify(highlightWLON));
-    });
+        highlightWLToggle.addEventListener('change', async () => {
+            highlightWLON = highlightWLToggle.checked;
+            localStorage.setItem('playstats_highlightWLON', JSON.stringify(highlightWLON));
+            refreshAnnotations();
+        });
+    }
 
     const playrateStartedToggle = document.getElementById('sgPlayrateStartedToggle');
+    if (playrateStartedToggle) {
+        playrateStartedToggle.checked = playrateStartedON;
 
-    // Load saved state from localStorage (default to true if not set)
-    const savedPlayrateStarted = localStorage.getItem('playstats_playratestarted');
-    playrateStartedToggle.checked = savedPlayrateStarted !== null ? JSON.parse(savedPlayrateStarted) : playrateStartedON;
-
-    // Set the variable to match saved state
-    playrateStartedON = playrateStartedToggle.checked;
-
-    playrateStartedToggle.addEventListener('change', async () => {
-        playrateStartedON = playrateStartedToggle.checked;
-
-        // Save to localStorage
-        localStorage.setItem('playstats_playratestarted', JSON.stringify(playrateStartedON));
-    });
+        playrateStartedToggle.addEventListener('change', async () => {
+            playrateStartedON = playrateStartedToggle.checked;
+            localStorage.setItem('playstats_playrateStarted', JSON.stringify(playrateStartedON));
+            refreshAnnotations();
+        });
+    }
 
     const ignoreDlcToggle = document.getElementById('sgIgnoreDlcToggle');
+    if (ignoreDlcToggle) {
+        ignoreDlcToggle.checked = ignoreDlcON;
 
-    // Load saved state from localStorage (default to true if not set)
-    const savedIgnoreDlc = localStorage.getItem('playstats_ignoreDlc');
-    ignoreDlcToggle.checked = savedIgnoreDlc !== null ? JSON.parse(savedIgnoreDlc) : ignoreDlcON;
-
-    // Set the variable to match saved state
-    ignoreDlcON = ignoreDlcToggle.checked;
-
-    ignoreDlcToggle.addEventListener('change', async () => {
-        ignoreDlcON = ignoreDlcToggle.checked;
-
-        // Save to localStorage
-        localStorage.setItem('playstats_ignoreDlc', JSON.stringify(ignoreDlcON));
-        refreshAnnotations();
-    });
+        ignoreDlcToggle.addEventListener('change', async () => {
+            ignoreDlcON = ignoreDlcToggle.checked;
+            localStorage.setItem('playstats_ignoreDlc', JSON.stringify(ignoreDlcON));
+            refreshAnnotations();
+        });
+    }
 
     const showExtendedStatsToggle = document.getElementById('sgShowExtendedStatsToggle');
+    if (showExtendedStatsToggle) {
+        showExtendedStatsToggle.checked = showExtendedStatsON;
 
-    // Load saved state from localStorage (default to true if not set)
-    const savedShowExtendedStats = localStorage.getItem('playstats_showExtendedStats');
-    showExtendedStatsToggle.checked = savedShowExtendedStats !== null ? JSON.parse(savedShowExtendedStats) : showExtendedStatsON;
-
-    // Set the variable to match saved state
-    showExtendedStatsON = showExtendedStatsToggle.checked;
-
-    showExtendedStatsToggle.addEventListener('change', async () => {
-        showExtendedStatsON = showExtendedStatsToggle.checked;
-
-        // Save to localStorage
-        localStorage.setItem('playstats_showExtendedStats', JSON.stringify(showExtendedStatsON));
-        refreshAnnotations();
-    });
+        showExtendedStatsToggle.addEventListener('change', async () => {
+            showExtendedStatsON = showExtendedStatsToggle.checked;
+            localStorage.setItem('playstats_showExtendedStats', JSON.stringify(showExtendedStatsON));
+            refreshAnnotations();
+        });
+    }
 
     if (!isGroupPage) {
         document
@@ -1991,11 +3646,7 @@
         localStorage.setItem('playstats_panelLeft', Math.round(rect.left));
     });
 
-    const status = msg => document.getElementById('sgStatus').innerText = msg;
-
     /************ HELPERS ************/
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-
     async function tryRestoreProfileScan() {
         // Check if on a /user/ Profile won page
         const pageUserMatch = location.pathname.match(/\/user\/([^\/]+)\/giveaways\/won(?:\/|$)/i);
@@ -2597,6 +4248,17 @@
         GM_setValue(ESGST_CACHE_KEY, cache);
     }
 
+    async function cacheUserStats(username, stats, fullScan) {
+        const key = username.toLowerCase();
+
+        if (!fullScan || scanState.userPrivate[key]) {
+            return;
+        }
+
+        await saveUserStatsToCache(username, stats);
+        refreshAnnotations();
+    }
+
     async function saveUserStatsToCache(username, stats) {
         const key = `user_stats_${username.toLowerCase()}`;
         const data = {
@@ -2943,12 +4605,11 @@
     }
 
     //************ CACHE HELPERS ************/
-    function getGaPath() {
-        return location.pathname.replace(/\/$/, '');
+    function getGaPath(path = location.pathname) {
+        return path.replace(/\/$/, '');
     }
 
-    async function loadGiveawayCache() {
-        const path = getGaPath();
+    async function loadGiveawayCache(path = getGaPath()) {
         const entry = await gaGet(path);
         if (!entry) return null;
 
@@ -2959,8 +4620,8 @@
         return entry;
     }
 
-    async function saveGiveawayCache(data) {
-        await gaSet(getGaPath(), data);
+    async function saveGiveawayCache(data, path = getGaPath()) {
+        await gaSet(path, data);
         enforceGaLRULimit(); // fire-and-forget
     }
 
@@ -3301,17 +4962,24 @@
     }
 
     /************ GA SCAN ************/
-    async function scanGiveaways() {
+    async function scanGiveaways({
+        path = location.pathname,
+        forcedWinner: requestedWinner = null
+    } = {}) {
         status('Scanning giveaways…');
 
-        const base = location.href.split('?')[0];
-        const cache = await loadGiveawayCache();
+        const base = new URL(path, location.origin).href;
+        const cachePath = getGaPath(path);
+        const cache = await loadGiveawayCache(cachePath);
         const cachedGiveaways = cache?.giveaways || [];
         const lastCacheUpdate = cache?.lastCacheUpdate || 0;
         const now = Math.floor(Date.now() / 1000);
 
-        let forcedWinner = null;
-        if (isUserWonPage) {
+        let forcedWinner = requestedWinner
+            ? requestedWinner.toLowerCase()
+            : null;
+
+        if (!forcedWinner && isUserWonPage) {
             forcedWinner = location.pathname
                 .split('/user/')[1]
                 .split('/')[0]
@@ -3438,7 +5106,7 @@
         await saveGiveawayCache({
             lastCacheUpdate: now,
             giveaways: merged
-        });
+        }, cachePath);
 
         return merged;
     }
@@ -3561,10 +5229,9 @@
             `;
         }
 
-        if (fullScan && !scanState.userPrivate[username]) {
-            saveUserStatsToCache(username, stats);
-            refreshAnnotations();
-        }
+        cacheUserStats(username, stats, fullScan).catch(err => {
+            console.warn('[Playstats] Failed to cache user stats:', err);
+        });
 
         render(wins);
     }
@@ -4070,11 +5737,6 @@
     /***********************
      * Giveaway IndexedDB
      ***********************/
-    const GA_DB_NAME = 'playstats-ga-cache';
-    const GA_DB_VERSION = 1;
-
-    let gaDbPromise = null;
-
     function openGaDB() {
         if (gaDbPromise) return gaDbPromise;
 
@@ -4197,12 +5859,6 @@
     /***********************
      * Steam IndexedDB
      ***********************/
-    const STEAM_DB_NAME = 'playstats-steam-cache';
-    const STEAM_DB_VERSION = 3;
-    //const GA_MAX_TOTAL = 50_000; // total giveaways across all pages
-
-    let steamDbPromise = null;
-
     function openSteamDB() {
         if (steamDbPromise) return steamDbPromise;
 
@@ -4255,8 +5911,6 @@
             tx.onerror = () => reject(tx.error);
         });
     }
-
-    let lastSteamTTLCleanup = 0;
 
     async function idbDelete(storeName, key) {
         const db = await openSteamDB();
@@ -5488,7 +7142,11 @@
     }
 
     /************ STEAM PROGRESS ************/
-    function initSteamProgress(total) {
+    function initSteamProgress(total, batchContext = null) {
+        if (batchContext) {
+            batchContext.start();
+            return;
+        }
         let box = document.getElementById('steam-progress');
         if (box) box.remove();
 
@@ -5518,19 +7176,33 @@
         document.body.appendChild(box);
     }
 
-    function updateSteamProgress(done, total) {
+    function updateSteamProgress(done, total, batchContext = null) {
+        if (batchContext) {
+            batchContext.update(done, total);
+            return;
+        }
+
         const text = document.getElementById('steam-progress-text');
         const bar = document.getElementById('steam-progress-bar');
+
         if (!text || !bar) return;
 
         text.textContent = `Fetching Steam data… ${done} / ${total}`;
         bar.style.width = `${Math.round((done / total) * 100)}%`;
     }
 
-    function finishSteamProgress() {
+    function finishSteamProgress(batchContext = null) {
+        if (batchContext) {
+            batchContext.finish();
+            return;
+        }
+
         const box = document.getElementById('steam-progress');
+
         if (box) {
-            box.querySelector('#steam-progress-text').textContent = 'Steam data complete ✔';
+            box.querySelector('#steam-progress-text').textContent =
+                'Steam data complete ✔';
+
             setTimeout(() => box.remove(), 1500);
         }
     }
@@ -5597,312 +7269,109 @@
         return !hasSgFilters && !hasScriptFilters && usernameMatch;
     }
 
-    /************ MAIN ************/
-    const runScan = async (useSteamCache) => {
+    /************ MULTI-USER SCAN FLOW ************/
+    let multiUserScanRunning = false;
+
+    async function runSelectedMultiUserScans() {
+        if (multiUserScanRunning) return;
+
+        // This selector assumes each Playstats selection checkbox
+        // has class "sg-multi-user-select" and a data-username attribute.
+        const selectedUsers = [
+            ...document.querySelectorAll(
+                '.sg-multi-user-select:checked'
+            )
+        ]
+            .map(input => input.dataset.username?.trim())
+            .filter(Boolean);
+
+        const statusEl = document.getElementById('sgMultiStatus');
+        const runButton = document.getElementById('sgMultiRun');
+        const delayInput = document.getElementById('sgMultiDelay');
+
+        if (!selectedUsers.length) {
+            statusEl.textContent = 'Select at least one user.';
+            return;
+        }
+
+        if (!settings.steamApiKey) {
+            statusEl.textContent = 'Steam API key is missing.';
+            return;
+        }
+        const validKey = await isApiKeyValid(settings.steamApiKey);
+
+        if (!validKey) {
+            statusEl.textContent = 'Invalid Steam API key.';
+            return;
+        }
+
+        const delayMs = Math.max(
+            0,
+            Math.min(60, Number(delayInput.value) || 0)
+        );
+
+        multiUserScanRunning = true;
+        runButton.disabled = true;
+
+        let completed = 0;
+        let failed = 0;
+
         try {
-            const mode = scanState.mode;
-            const whitelistOnly = document.getElementById('sgWhitelistOnly').checked;
-            const fullCVOnly = document.getElementById('sgFullCvOnly').checked;
-            const reviewFilterEnabled = document.getElementById('sgReviewFilterEnabled').checked;
-            const minReviews = Number(document.getElementById('sgMinReviewCount').value || 0);
-            const minReviewScore = Number(document.getElementById('sgMinReviewScore').value || 0);
-
-            const username = userInput.value.trim();
-            scanState.userDisplay[username.toLowerCase()] ??= username;
-            const creatorFilter = creatorInput.value.trim().toLowerCase();
-
-            const startDateInput = document.getElementById('sgStartDate').value;
-            const endDateInput   = document.getElementById('sgEndDate').value;
-
-            const fullScan = isFullScan(username, whitelistOnly, fullCVOnly, reviewFilterEnabled, creatorFilter, startDateInput, endDateInput)
-
-            // Convert to UNIX seconds (or null)
-            const startTs = startDateInput
-                ? Math.floor(new Date(startDateInput + 'T00:00:00Z').getTime() / 1000)
-                : null;
-
-            const endTs = endDateInput
-                ? Math.floor(new Date(endDateInput + 'T23:59:59Z').getTime() / 1000)
-                : null;
-
-            if (!settings.steamApiKey) {
-                status('❌ Error: Steam API Key is missing in settings.');
-                return;
-            }
-
-            const isValid = await isApiKeyValid(settings.steamApiKey);
-            if (!isValid) {
-                status('❌ Error: Invalid Steam API Key. Please check your settings.');
-                return;
-            }
-
-            if (mode === 'single' && !username) {
-                status('Enter a username');
-                return;
-            }
-
-            resultsWrap.innerHTML = '';
-
-            if (useSteamCache) {
-                status(`Scanning giveaways...`);
-            } else {
-                status(`Scanning giveaways (fresh)...`);
-            }
-
-            /* -------------------------------------------------
-               Unified scan for all modes
-            ------------------------------------------------- */
-            const wins = await scanGiveaways();
-
-            /* -------------------------------------------------
-               Whitelist-only giveaway filtering
-            ------------------------------------------------- */
-            let filteredWins = wins;
-
-            if (whitelistOnly) {
-                filteredWins = filteredWins.filter(g => g.wlonly);
-            }
-
-            /* -------------------------------------------------
-               Creator giveaway filtering
-            ------------------------------------------------- */
-            if (creatorFilter) {
-                filteredWins = filteredWins.filter(g => g.creator === creatorFilter);
-            }
-
-            /* -------------------------------------------------
-               Ignore DLC filtering
-            ------------------------------------------------- */
-            if (ignoreDlcON) {
-                status('Filtering DLC giveaways…');
-                await ensureEsgstDlcData(filteredWins);
-                filteredWins = filterOutDlcWins(filteredWins);
-            }
-
-            /* -------------------------------------------------
-               Full CV filtering
-            ------------------------------------------------- */
-            if (fullCVOnly) {
-                status('Filtering Full CV giveaways…');
-                console.log (`filtering full CV`);
-                await ensureEsgstCvData(filteredWins);
-                filteredWins = getFullCVWins(filteredWins);
-            }
-
-            /* -------------------------------------------------
-               Date range filtering
-            ------------------------------------------------- */
-            if (startTs || endTs) {
-                filteredWins = filteredWins.filter(g => {
-                    if (startTs && g.ts < startTs) return false;
-                    if (endTs && g.ts > endTs) return false;
-                    return true;
-                });
-            }
-
-            /* -------------------------------------------------
-               Review filtering
-            ------------------------------------------------- */
-            if (
-                reviewFilterEnabled &&
-                (minReviews > 0 || minReviewScore > 0)
-            ) {
-                status('Filtering by review requirements...');
-
-                await ensureSteamMetaData(
-                    filteredWins,
-                    msg => status(msg)
-                );
-
-                filteredWins = getMinReviewWins(
-                    filteredWins,
-                    minReviews,
-                    minReviewScore
-                );
-            }
-
-            /* -------------------------------------------------
-               User-mode winner filtering
-            ------------------------------------------------- */
-            let membersSet = null;
-
-            if (mode === 'group') {
-                status('Fetching group members...');
-                membersSet = await fetchGroupMembers();
-            }
-
-            if (!filteredWins.length) {
-                status('No matching giveaways found');
-                return;
-            }
-
-            let userMap = buildUserMap(filteredWins, mode, username, membersSet);
-
-            const usernames = Object.keys(userMap);
-            const totalUsers = usernames.length;
-
-            if (totalUsers === 0) {
-                status('No matching winners found');
-                return;
-            }
-
-            /* -------------------------------------------------
-               Fetch Steam data
-            ------------------------------------------------- */
-            status('Fetching Steam data...');
-
-            let processedUsers = 0;
             await cleanupSteamCacheTTL();
 
-            for (const [user, userWins] of Object.entries(userMap)) {
-                status(`Fetching Steam data for ${scanState.userDisplay[user] ?? user} (${++processedUsers}/${totalUsers})...`);
+            for (let i = 0; i < selectedUsers.length; i++) {
+                const username = selectedUsers[i];
 
-                let steamid;
+                statusEl.textContent =
+                    `Scanning ${i + 1}/${selectedUsers.length}: ${username}`;
+
+                let succeeded = false;
+
                 try {
-                    steamid = await getSteamID(user);
-                } catch {
-                    continue;
-                }
+                    succeeded = await runScan(true, {
+                        targetUsername: username,
+                        skipApiKeyValidation: true,
 
-                userWins.forEach(w => w.steamid = steamid);
+                        onComplete: (user, stats, result = {}) => {
+                            if (result.error) {
+                                console.warn(
+                                    `[Playstats] ${user}: ${result.error}`
+                                );
+                            }
 
-                let steamGamesMap = {};
-                let isPrivateUser = false;
-
-                // 1. First attempt (using cache if enabled)
-                let res = await getOwnedGamesCachedIDB(steamid, useSteamCache);
-                steamGamesMap = res.apps;
-                isPrivateUser = !!res.private;
-
-                scanState.userPrivate[user] = isPrivateUser;
-
-                if (isPrivateUser) {
-                    userWins.forEach(w => {
-                        w.hours = null;
-                        w.ach = null;
+                            if (stats) {
+                                // Implement this in initMultiUserMode() to update
+                                // the four statistics cells for this user's row.
+                                //updateMultiUserStatsRow(user, stats, result);
+                            }
+                        }
                     });
-                    continue; // skip Steam processing for this user
+                } catch (err) {
+                    console.error(
+                        `[Playstats] Batch scan failed for ${username}:`,
+                        err
+                    );
                 }
 
-                // 2. Precise Cache Invalidation Check:
-                // A win is in the "activation pending" window (ended in last 14 days)
-                const isPendingActivationWindow = (w, cacheTs) => {
-                    const fourteenDaysInSec = 14 * 24 * 60 * 60;
-                    const nowTs = Date.now() / 1000;
-                    return (nowTs - w.ts) <= fourteenDaysInSec;
-                };
-
-                // Check if cache is older than 24 hours
-                const cacheAgeInHours = (Date.now() / 1000 - res.cacheTs) / 3600;
-
-                const hasUnresolvedRecentWin = userWins.some(w =>
-                    !w.isSub &&
-                    w.app &&
-                    steamGamesMap[w.app] === undefined && // Still missing in cached data
-                    isPendingActivationWindow(w)          // Won within the last 14 days
-                );
-
-                // Only force-refresh if there's an unresolved recent win AND the cache is > 24 hours old
-                if (hasUnresolvedRecentWin && cacheAgeInHours > 24 && useSteamCache) {
-                    console.log(`[Steam Sync] ${user} has unresolved recent wins and cache is ${cacheAgeInHours.toFixed(1)}h old. Fetching fresh GetOwnedGames...`);
-                    res = await getOwnedGamesCachedIDB(steamid, false);
-                    steamGamesMap = res.apps;
+                if (succeeded) {
+                    completed++;
+                } else {
+                    failed++;
                 }
 
-                initSteamProgress(userWins.length);
-                let done = 0;
-
-                // Worker that processes ONE win
-                async function processWin(w) {
-                    if (w.isSub && w.sub) {
-                        try {
-                            w.hours = await getSubPlaytime(steamid, w.sub, useSteamCache);
-
-                            const subAchData = await getSubAchievements(steamid, w.sub, useSteamCache);
-                            w.ach = subAchData.ach;
-                            w.isMissing = subAchData.isMissing;
-                        } catch {
-                            w.hours = 0;
-                            w.isMissing = true;
-                            w.ach = 'N/A';
-                        }
-                    } else {
-                        w.hours = steamGamesMap[w.app] ?? 0;
-
-                        try {
-                            // If the game isn't marked private by the user, this succeeds—even for banned/delisted games
-                            w.ach = await getAchievementsCachedIDB(steamid, w.app, useSteamCache);
-                            w.isMissing = false;
-                        } catch (err) {
-                            // Game is manually hidden/private -> Fall back to ESGST for max achievements schema
-                            w.isMissing = true;
-
-                            const esgstData = await fetchEsgstAchievements([w.app]);
-                            const totalAch = esgstData[w.app] || 0;
-
-                            w.ach = totalAch > 0 ? `0/${totalAch}` : 'N/A';
-                        }
-                    }
-
-                    updateSteamProgress(++done, userWins.length);
+                if (i < selectedUsers.length - 1 && delayMs > 0) {
+                    await sleep(delayMs);
                 }
-
-                // Run with limited concurrency (SAFE + FAST)
-                const concurrency = settings.steamConcurrency;
-                //const steamConcurrency =
-                //    mode === 'single' ? settings.steamConcurrencyFast : settings.steamConcurrencySlow;
-
-                await runWithConcurrency(userWins, concurrency, processWin);
-
-                finishSteamProgress();
-
-                // CACHE ENRICHED USER SNAPSHOT
-                if (fullScan) {
-                    await saveUserScanCache(user, userWins);
-                }
-
-                // Between users delay
-                //if (mode !== 'single') await sleep(20);
             }
 
-            /* -------------------------------------------------
-               Render results
-            ------------------------------------------------- */
-            scanState.userMap = userMap;
-            scanState.membersSet = membersSet;
-            scanState.activeUser = null;
-
-            if (mode === 'single') {
-                scanState.summary = null;
-                scanState.activeUser = username.toLowerCase();
-                scanState.userMap = userMap;
-                scanState.membersSet = null;
-
-                saveScanState();
-                showUserDetail(scanState.activeUser, fullScan);
-                return;
-            }
-
-            // Multi-user summary
-            const summary = Object.entries(userMap).map(([user, wins]) => {
-                const stats = computeUserStats(wins);
-
-                return {
-                    username: user,
-                    ...stats
-                };
-            });
-
-            summary.sort((a, b) => a.username.localeCompare(b.username));
-
-            scanState.summary = summary;
-            renderSummary(summary, membersSet);
-            status(`Loaded ${summary.length} users`);
-        } catch (err) {
-            console.error('[Playstats]', err);
-            status('Scan failed — see console');
+            statusEl.textContent =
+                `Finished: ${completed} succeeded, ${failed} failed.`;
+        } finally {
+            multiUserScanRunning = false;
+            runButton.disabled = false;
         }
-    };
+    }
+
     document.getElementById('sgStart').onclick = () => runScan(true);
     document.getElementById('sgStartNoCache').onclick = () => runScan(false);
     refreshAnnotations();
