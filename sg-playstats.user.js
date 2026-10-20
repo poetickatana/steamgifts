@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.13.1
+// @version      1.13.2
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -13,6 +13,7 @@
 // @match        https://www.steamgifts.com/user/*/giveaways/won
 // @match        https://www.steamgifts.com/group/*/*/users
 // @match        https://www.steamgifts.com/giveaway/*/*/entries
+// @match        https://www.steamgifts.com/giveaway/*/*/winners
 // @match        https://www.steamgifts.com/account/manage/whitelist
 // @match        https://www.steamgifts.com/account/manage/blacklist
 // @grant        GM_xmlhttpRequest
@@ -39,6 +40,7 @@
         /^\/group\/[^/]+\/[^/]+\/?$/,                      // Matches /group/id/name (no subpaths)
         /^\/group\/[^/]+\/[^/]+\/users\/?$/,               // Group users [BATCH MODE]
         /^\/giveaway\/[^/]+\/[^/]+\/entries\/?$/,          // Giveaway entries [BATCH MODE]
+        /^\/giveaway\/[^/]+\/[^/]+\/winners\/?$/,          // Giveaway winners [BATCH MODE]
         /^\/account\/manage\/(?:whitelist|blacklist)\/?$/  // Whitelist / blacklist management [BATCH MODE]
     ];
 
@@ -127,7 +129,7 @@
     cachedTs: null
     };
 
-        /************ MAIN ************/
+    /************ MAIN ************/
     const runScan = async (useSteamCache, options = {}) => {
         const targetUsername = options.targetUsername?.trim() || null;
         const isBatchUserScan = !!targetUsername;
@@ -541,7 +543,8 @@
     const isMultiUserPage =
         /^\/account\/manage\/(?:whitelist|blacklist)\/?$/.test(location.pathname) ||
         /^\/group\/[^/]+\/[^/]+\/users\/?$/.test(location.pathname) ||
-        /^\/giveaway\/[^/]+\/[^/]+\/entries\/?$/.test(location.pathname);
+        /^\/giveaway\/[^/]+\/[^/]+\/entries\/?$/.test(location.pathname) ||
+        /^\/giveaway\/[^/]+\/[^/]+\/winners\/?$/.test(location.pathname);
 
     if (isMultiUserPage) {
         initMultiUserMode();
@@ -873,6 +876,7 @@
                 <div class="pm-button-group">
                     <button id="playstats-multi-select-all" type="button">Select All</button>
                     <button id="playstats-multi-select-none" type="button">Deselect All</button>
+                    <button id="playstats-multi-toggle-selected" type="button">Show Selected Only</button>
                 </div>
 
                 <div class="pm-filter-group">
@@ -1324,7 +1328,7 @@
             const average = document.createElement('td');
 
             const lastChecked = document.createElement('td');
-            lastChecked.className = 'pm-last-checked';
+            lastChecked.className = 'pm-last-checked esgst-at';
             lastChecked.textContent = '—';
 
             const scanStatus = document.createElement('td');
@@ -1559,10 +1563,6 @@
                 }
 
                 updateCount();
-
-               const scanStatus = panel.querySelector('#sgMultiStatus');
-               scanStatus.textContent =
-                    `Selected all users.`;
             });
 
         document.querySelector('#playstats-multi-select-none')
@@ -1578,27 +1578,37 @@
                 }
 
                 updateCount();
-
-                const scanStatus = panel.querySelector('#sgMultiStatus');
-                scanStatus.textContent =
-                    `Deselected all users.`;
             });
 
+        let showSelectedOnly = false;
+
+        document.querySelector('#playstats-multi-toggle-selected')
+            .addEventListener('click', (event) => {
+                showSelectedOnly = !showSelectedOnly;
+
+                event.currentTarget.textContent = showSelectedOnly
+                    ? 'Show All Rows'
+                    : 'Show Selected Only';
+
+                for (const [username, row] of rowElements) {
+                    const user = users.get(username);
+
+                    row.style.display = showSelectedOnly && !user?.selected
+                        ? 'none'
+                        : '';
+                }
+            });
 
         panel.querySelector('#playstats-multi-select-stale')
             .addEventListener('click', async () => {
                 const input = panel.querySelector('#playstats-multi-stale-days');
-                const scanStatus = panel.querySelector('#sgMultiStatus');
 
                 const days = Math.max(
                     1,
                     Math.min(3650, Number(input.value) || 30)
                 );
 
-                input.value = String(days);
-
-                // Ensure dates are loaded for users whose cache lookup hasn't finished.
-                scanStatus.textContent = 'Checking cached dates…';
+                input.value = String(days);             
 
                 await Promise.all(
                     [...users.values()].map(async user => {
@@ -1652,9 +1662,6 @@
 
                 selectAllByDefault = false;
                 updateCount();
-
-                scanStatus.textContent =
-                    `Selected ${selected} users not checked within ${days} days.`;
             });
 
 // Native sorting for the multi-user table.
@@ -2646,26 +2653,29 @@ function sortMultiUserRows(column, type, direction) {
             border-left: 1px solid #444;
             padding-left: 10px;
         }
-        /* Sticky Average Row */
-        .sticky-avg {
-            position: sticky;
-            top: 0;
-            z-index: 10;
-            background: #1b2838 !important;
-            font-weight: bold;
-            color: #66c0f4;
-        }
-        /* Add the top border only to the first sticky row */
-        .sticky-avg td { border-top: 1px solid #444; }
+     /* Sticky Average Row */
+     .sticky-avg {
+         position: sticky;
+         top: 0; /* Overridden by JavaScript */
+         z-index: 3;
+         background: #1b2838 !important;
+         font-weight: bold;
+         color: #66c0f4;
+     }
 
-        /* Sticky Header Row */
-        .sticky-header th {
-            position: sticky;
-            background: #2a475e !important;
-            color: #fff;
-            z-index: 9;
-            cursor: pointer;
-        }
+     .sticky-avg td {
+         border-top: 1px solid #444;
+     }
+
+     /* Sticky Header Row */
+     .sticky-header th {
+         position: sticky;
+         top: 30px; /* Fallback; JavaScript sets the actual offset */
+         background: #2a475e !important;
+         color: #fff;
+         z-index: 3;
+         cursor: pointer;
+     }
         /* Small text formatting */
         #sg-summary-table small { opacity: 0.7; font-size: 0.85em; }
     `;
@@ -5284,10 +5294,13 @@ function sortMultiUserRows(column, type, direction) {
     function clearResults() {
         if (!resultsWrap) return;
 
-        // Remove tables
+        // Remove tables.
         resultsWrap.querySelectorAll('table').forEach(t => t.remove());
 
-        // Clean up view toggle & action buttons
+        // Remove the sticky toolbar wrapper entirely.
+        resultsWrap.querySelectorAll('.sg-results-sticky').forEach(el => el.remove());
+
+        // Clean up remaining results UI.
         const elementsToRemove = [
             '#dismiss-table',
             '#write-csv',
@@ -5296,11 +5309,7 @@ function sortMultiUserRows(column, type, direction) {
             '#back-to-summary',
             '#toggle-missing-filter',
             '.sg-back-to-top',
-
-            // Summary filter UI
             '#sg-summary-filter-wrap',
-
-            // Generic table filter UI
             '[id$="-filter-toggle"]',
             '[id$="-filter-panel"]'
         ];
@@ -5406,6 +5415,17 @@ function sortMultiUserRows(column, type, direction) {
 
         clearResults();
 
+        const stickyControls = document.createElement('div');
+        stickyControls.className = 'sg-results-sticky';
+        stickyControls.style.cssText = `
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: #1b2838;
+            padding-bottom: 0;
+            display: flow-root;
+        `;
+
         resultsWrap.querySelector('#sg-summary-filter-wrap')?.remove();
 
         const dismissBtn = document.createElement('button');
@@ -5427,7 +5447,7 @@ function sortMultiUserRows(column, type, direction) {
             clearResults();
             if (typeof status === 'function') status('');
         };
-        resultsWrap.appendChild(dismissBtn);
+        stickyControls.appendChild(dismissBtn);
 
         const csvBtn = document.createElement('button');
         csvBtn.id = 'write-csv';
@@ -5453,7 +5473,7 @@ function sortMultiUserRows(column, type, direction) {
             }
         };
 
-        resultsWrap.appendChild(csvBtn);
+        stickyControls.appendChild(csvBtn);
 
         resultsWrap.style.maxHeight = '70vh';
         resultsWrap.style.overflowY = 'auto';
@@ -5466,7 +5486,7 @@ function sortMultiUserRows(column, type, direction) {
         flatViewBtn.onclick = () => {
             renderFlatView();
         };
-        resultsWrap.appendChild(flatViewBtn);
+        stickyControls.appendChild(flatViewBtn);
 
         // Summary filters
         const filterState = getFilterState('sg-summary-table');
@@ -5489,8 +5509,6 @@ function sortMultiUserRows(column, type, direction) {
 
         updateFilterButton(filterBtn, 'sg-summary-table');
 
-        resultsWrap.appendChild(filterBtn);
-
         const filterWrap = document.createElement('div');
         filterWrap.id = 'sg-summary-filter-wrap';
 
@@ -5507,7 +5525,8 @@ function sortMultiUserRows(column, type, direction) {
         });
 
         filterWrap.appendChild(filterPanel);
-        resultsWrap.appendChild(filterWrap);
+        stickyControls.appendChild(filterWrap);
+        resultsWrap.appendChild(stickyControls);
 
         function renderSummaryTable() {
             const filterState = getFilterState('sg-summary-table');
@@ -5645,7 +5664,6 @@ function sortMultiUserRows(column, type, direction) {
             headers.forEach((h, i) => {
                 const th = document.createElement('th');
                 th.innerHTML = h;
-                th.style.top = `${avgHeight}px`;
                 th.onclick = () => sortTable(table, i);
                 trHead.appendChild(th);
             });
@@ -5722,6 +5740,26 @@ function sortMultiUserRows(column, type, direction) {
             });
             table.appendChild(tbody);
             resultsWrap.appendChild(table);
+
+            function updateSummaryStickyOffsets() {
+                const filterWrap = document.getElementById('sg-summary-filter-wrap');
+
+                const controlsHeight = stickyControls.getBoundingClientRect().height;
+                const avgHeight = trAvg.getBoundingClientRect().height;
+
+                trAvg.style.top = `${controlsHeight}px`;
+
+                trHead.querySelectorAll('th').forEach(th => {
+                    th.style.top = `${controlsHeight + avgHeight}px`;
+                });
+            }
+
+            const summaryStickyObserver = new ResizeObserver(
+                updateSummaryStickyOffsets
+            );
+
+            summaryStickyObserver.observe(stickyControls);
+            updateSummaryStickyOffsets();
 
             attachBackToTop(resultsWrap);
 
@@ -6342,12 +6380,11 @@ function sortMultiUserRows(column, type, direction) {
             ? 'Click to show all games'
             : 'Click to filter and show only private games';
 
-        btn.style = `
-            float: right;
+        btn.style.cssText = `
+            flex: 0 0 auto;
             margin-bottom: 5px;
-            margin-right: 5px;
             padding: 2px 6px;
-            font-size: 11px;
+            font-size: 12px;
             font-weight: bold;
             border: none;
             border-radius: 3px;
@@ -6368,7 +6405,9 @@ function sortMultiUserRows(column, type, direction) {
             }
         };
 
-        parentEl.appendChild(btn);
+        const csvBtn = parentEl.querySelector('#write-csv');
+        parentEl.insertBefore(btn, csvBtn);
+
     }
 
     // --- Shared DOM & Toolbar Helpers ---
@@ -6396,30 +6435,69 @@ function sortMultiUserRows(column, type, direction) {
     function setupToolbar(tableId, csvPrefix, extraLeftButtons = []) {
         clearResults();
 
-        // Extra buttons on the left (e.g. Back To Summary / Winners View)
-        extraLeftButtons.forEach(btn => resultsWrap.appendChild(btn));
+        const stickyControls = document.createElement('div');
+        stickyControls.className = 'sg-results-sticky';
+        stickyControls.style.cssText = `
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: #1b2838;
+            padding-bottom: 0;
+        `;
 
-        // Right-aligned CSV and Dismiss buttons
-        const csvBtn = createStyledButton('CSV', 'Export table to CSV', () => {
-            const table = document.getElementById(tableId);
-            if (table) {
-                exportTableToCSV(table, `${csvPrefix}-${new Date().toISOString().slice(0, 10)}`);
+        // One row for navigation and action buttons.
+        const toolbar = document.createElement('div');
+        toolbar.style.cssText = `
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            min-height: 30px;
+            padding-bottom: 0;
+        `;
+
+        toolbar.id = 'sg-results-toolbar';
+        extraLeftButtons.forEach(btn => toolbar.appendChild(btn));
+
+        // Push CSV and Dismiss to the right.
+        const spacer = document.createElement('div');
+        spacer.style.flex = '1';
+        toolbar.appendChild(spacer);
+
+        const csvBtn = createStyledButton(
+            'CSV',
+            'Export table to CSV',
+            () => {
+                const table = document.getElementById(tableId);
+                if (table) {
+                    exportTableToCSV(
+                        table,
+                        `${csvPrefix}-${new Date().toISOString().slice(0, 10)}`
+                    );
+                }
+            },
+            { marginRight: '0' }
+        );
+
+        const dismissBtn = createStyledButton(
+            '✖',
+            'Dismiss results',
+            () => {
+                clearResults();
+                if (typeof status === 'function') status('');
             }
-        }, { marginRight: '5px' });
-
-        const dismissBtn = createStyledButton('✖', 'Dismiss results', () => {
-            panel.querySelector('table')?.remove();
-            clearResults();
-            if (typeof status === 'function') status('');
-        });
+        );
 
         dismissBtn.id = 'dismiss-table';
         csvBtn.id = 'write-csv';
 
-        resultsWrap.appendChild(dismissBtn);
-        resultsWrap.appendChild(csvBtn);
-    }
+        toolbar.appendChild(csvBtn);
+        toolbar.appendChild(dismissBtn);
 
+        stickyControls.appendChild(toolbar);
+        resultsWrap.appendChild(stickyControls);
+
+        return stickyControls;
+    }
 
     const tableFilterState = {};
 
@@ -6922,9 +7000,12 @@ function sortMultiUserRows(column, type, direction) {
         tableId,
         rawResults,
         columns,
-        filterDefinitions = []
+        filterDefinitions = [],
+        stickyControls
     }) {
-        renderMissingToggleBtn(rawResults, resultsWrap);
+        const toolbar = stickyControls.querySelector('#sg-results-toolbar');
+
+        renderMissingToggleBtn(rawResults, toolbar);
 
         resultsWrap.style.maxHeight = '70vh';
         resultsWrap.style.overflowY = 'auto';
@@ -6948,14 +7029,19 @@ function sortMultiUserRows(column, type, direction) {
 
                     updateFilterButton(filterBtn, tableId);
                 },
-                { marginRight: '5px' }
+                { marginRight: '0' }
             );
 
             filterBtn.id = `${tableId}-filter-toggle`;
 
             updateFilterButton(filterBtn, tableId);
 
-            resultsWrap.appendChild(filterBtn);
+            const missingBtn = toolbar.querySelector('#toggle-missing-filter');
+
+            toolbar.insertBefore(
+                filterBtn,
+                missingBtn || toolbar.querySelector('#write-csv')
+            );
 
             const panel = createFilterPanel({
                 tableId,
@@ -6967,7 +7053,7 @@ function sortMultiUserRows(column, type, direction) {
                 }
             });
 
-            resultsWrap.appendChild(panel);
+            stickyControls.appendChild(panel);
         }
 
         // Table
@@ -6975,7 +7061,7 @@ function sortMultiUserRows(column, type, direction) {
         table.id = tableId;
 
         table.style =
-            'width: 100%; margin-top: 5px; border-collapse: collapse; ' +
+            'width: 100%; margin-top: 0; border-collapse: collapse; ' +
             'table-layout: fixed; text-align: center; white-space: nowrap;';
 
         const colgroup = document.createElement('colgroup');
@@ -6992,9 +7078,16 @@ function sortMultiUserRows(column, type, direction) {
         columns.forEach((col, i) => {
             const th = document.createElement('th');
             th.innerText = col.label;
-            th.style =
-                'cursor: pointer; padding: 6px; background: #2a475e; ' +
-                'color: #fff; border: 1px solid #444;';
+            th.style.cssText = `
+                position: sticky;
+                top: 0;
+                z-index: 10;
+                cursor: pointer;
+                padding: 6px;
+                background: #2a475e;
+                color: #fff;
+                border: 1px solid #444;
+            `;
 
             th.onclick = () => sortTable(table, i);
 
@@ -7007,6 +7100,22 @@ function sortMultiUserRows(column, type, direction) {
         const tbody = document.createElement('tbody');
         table.appendChild(tbody);
         resultsWrap.appendChild(table);
+
+        // Keep table headers directly below the sticky controls.
+        function updateStickyHeaderOffset() {
+            const offset = stickyControls.offsetHeight;
+
+            table.querySelectorAll('thead th').forEach(th => {
+                th.style.top = `${offset}px`;
+            });
+        }
+
+        const stickyControlsObserver = new ResizeObserver(
+            updateStickyHeaderOffset
+        );
+
+        stickyControlsObserver.observe(stickyControls);
+        updateStickyHeaderOffset();
 
         function updateTable() {
             let displayResults = rawResults;
@@ -7067,7 +7176,7 @@ function sortMultiUserRows(column, type, direction) {
             backBtn.id = 'back-to-summary';
         }
 
-        setupToolbar('sg-user-table', 'steamgifts-user', backBtn ? [backBtn] : []);
+        const stickyControls = setupToolbar('sg-user-table', 'steamgifts-user', backBtn ? [backBtn] : []);
 
         renderResultsTable({
             tableId: 'sg-user-table',
@@ -7079,7 +7188,8 @@ function sortMultiUserRows(column, type, direction) {
                 { label: 'Completion %', type: 'completion', width: '15%' },
                 { label: 'Hours', type: 'hours', width: '10%' }
             ],
-            filterDefinitions: USER_GIVEAWAY_FILTERS
+            filterDefinitions: USER_GIVEAWAY_FILTERS,
+            stickyControls
         });
     }
 
@@ -7096,7 +7206,7 @@ function sortMultiUserRows(column, type, direction) {
             winnersBtn.id = 'winners-view';
         }
 
-        setupToolbar('sg-flat-table', 'steamgifts-giveaways', winnersBtn ? [winnersBtn] : []);
+        const stickyControls = setupToolbar('sg-flat-table', 'steamgifts-giveaways', winnersBtn ? [winnersBtn] : []);
 
         renderResultsTable({
             tableId: 'sg-flat-table',
@@ -7109,7 +7219,8 @@ function sortMultiUserRows(column, type, direction) {
                 { label: 'Comp %', type: 'completion', width: '12%' },
                 { label: 'Hours', type: 'hours', width: '10%' }
             ],
-            filterDefinitions: FLAT_GIVEAWAY_FILTERS
+            filterDefinitions: FLAT_GIVEAWAY_FILTERS,
+            stickyControls
         });
     }
 
