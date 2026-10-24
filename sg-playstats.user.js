@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         SteamGifts Playstats
 // @namespace    sg-playstats
-// @version      1.13.3
+// @version      1.13.4
 // @updateURL    https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @downloadURL  https://github.com/poetickatana/steamgifts/raw/refs/heads/main/sg-playstats.user.js
 // @description  Scan all giveaways on a user or group page for wins by a specific user or all users and fetches Steam playtime + achievements data
@@ -4097,29 +4097,14 @@ function sortMultiUserRows(column, type, direction) {
 
                 onload: response => {
                     try {
-                        if (response.status < 200 || response.status >= 300) {
-                            throw new Error(
-                                `Steam reviews API HTTP ${response.status}: ` +
-                                response.responseText.slice(0, 500)
-                            );
-                        }
-
                         const data = JSON.parse(response.responseText);
-                        const result = data?.response;
-                        const summary = result?.query_summary;
-
-                        if (!summary ||
-                            summary.total_positive == null ||
-                            summary.total_reviews == null) {
-                            throw new Error(
-                                'Steam reviews API response missing summary totals. ' +
-                                `Response: ${response.responseText.slice(0, 1000)}`
-                            );
-                        }
 
                         resolve({
-                            total_positive: Number(summary.total_positive),
-                            total_reviews: Number(summary.total_reviews)
+                            total_positive:
+                                data?.query_summary?.total_positive ?? 0,
+
+                            total_reviews:
+                                data?.query_summary?.total_reviews ?? 0
                         });
 
                     } catch (err) {
@@ -4127,7 +4112,7 @@ function sortMultiUserRows(column, type, direction) {
                     }
                 },
 
-                onerror: error => reject(error)
+                onerror: reject
             });
         });
     }
